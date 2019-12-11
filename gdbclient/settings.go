@@ -14,7 +14,7 @@
 package gdbclient
 
 import (
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal/pool"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/pool"
 	"strconv"
 	"time"
 )

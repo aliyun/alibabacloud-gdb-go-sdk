@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	goClient "github.com/aliyun/alibabacloud-gdb-go-client/gdbclient"
+	goClient "github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient"
 )
 
 var (

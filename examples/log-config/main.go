@@ -15,7 +15,7 @@ package main
 
 import (
     "flag"
-    goClient "github.com/aliyun/alibabacloud-gdb-go-client/gdbclient"
+    goClient "github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient"
     "github.com/natefinch/lumberjack"
     "go.uber.org/zap"
     "go.uber.org/zap/zapcore"

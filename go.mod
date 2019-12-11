@@ -1,4 +1,4 @@
-module github.com/aliyun/alibabacloud-gdb-go-client
+module github.com/aliyun/alibabacloud-gdb-go-sdk
 
 go 1.13
 

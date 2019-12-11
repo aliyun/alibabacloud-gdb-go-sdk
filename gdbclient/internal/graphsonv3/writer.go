@@ -16,7 +16,7 @@ package graphsonv3
 import (
 	"encoding/base64"
 	"encoding/json"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"github.com/google/uuid"
 )
 

@@ -16,9 +16,9 @@ package gdbclient
 import (
 	"errors"
 	"fmt"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal/graphsonv3"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal/pool"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/pool"
 	"go.uber.org/zap"
 	"strconv"
 	"time"

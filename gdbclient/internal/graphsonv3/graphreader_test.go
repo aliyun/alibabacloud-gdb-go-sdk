@@ -14,7 +14,7 @@
 package graphsonv3
 
 import (
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/graph"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	. "github.com/smartystreets/goconvey/convey"
 	"testing"
 )

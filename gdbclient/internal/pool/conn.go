@@ -16,8 +16,8 @@ package pool
 import (
 	"encoding/json"
 	"errors"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal/graphsonv3"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"net/http"

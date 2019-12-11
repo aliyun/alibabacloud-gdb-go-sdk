@@ -15,7 +15,7 @@ package pool
 
 import (
 	"errors"
-	"github.com/aliyun/alibabacloud-gdb-go-client/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"go.uber.org/zap"
 	"sync"
 	"sync/atomic"
