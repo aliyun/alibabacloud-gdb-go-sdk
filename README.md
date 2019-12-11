@@ -22,14 +22,14 @@ export PATH=$GOPATH/bin:$GOROOT/bin:$PATH
 ## Install gdbclient driver
 
 ```
-go get -u github.com/ailyun/alibabacloud-gdb-go-client/gdbclient
+go get -u github.com/ailyun/alibabacloud-gdb-go-sdk/gdbclient
 ```
 or
 ```
 mkdir ${GOROOT}/src/github.com/aliyun
 cd ${GOROOT}/src/github.com/aliyun
-git clone https://github.com/ailyun/alibabacloud-gdb-go-client.git
-cd ${GOROOT}/src/github.com/aliyun/alibabacloud-gdb-go-client
+git clone https://github.com/ailyun/alibabacloud-gdb-go-sdk.git
+cd ${GOROOT}/src/github.com/aliyun/alibabacloud-gdb-go-sdk
 go install ./gdbclient
 ```
 
