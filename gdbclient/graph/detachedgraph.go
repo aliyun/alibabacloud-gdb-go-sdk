@@ -13,6 +13,11 @@
 
 package graph
 
+import (
+	"fmt"
+	"strings"
+)
+
 // gremlin element class for reference
 type DetachedElement struct {
 	id         string
@@ -135,6 +140,14 @@ func (d *DetachedProperty) PElement() Element {
 	return d.element
 }
 
+func (d *DetachedProperty) String() string {
+	v := fmt.Sprint(d.value)
+	if len(v) > 20 {
+		v = v[:20] + "..."
+	}
+	return "p[" + d.key + "->" + v + "]"
+}
+
 // gremlin vertex class for reference
 type DetachedVertex struct {
 	*DetachedElement
@@ -204,6 +217,10 @@ func (d *DetachedVertex) VProperties(keys ...string) []VertexProperty {
 	return vprops
 }
 
+func (d *DetachedVertex) String() string {
+	return "v[" + d.id + "]"
+}
+
 // gremlin vertexProperty class for reference
 type DetachedVertexProperty struct {
 	*DetachedElement
@@ -240,6 +257,14 @@ func (d *DetachedVertexProperty) VElement() Vertex {
 	return d.vertex
 }
 
+func (d *DetachedVertexProperty) String() string {
+	v := fmt.Sprint(d.value)
+	if len(v) > 20 {
+		v = v[:20] + "..."
+	}
+	return "vp[" + d.label + "->" + v + "]"
+}
+
 // gremlin vertexProperty class for reference
 type DetachedEdge struct {
 	*DetachedElement
@@ -268,6 +293,13 @@ func (d *DetachedEdge) OutVertex() Vertex {
 	return d.outVertex
 }
 
+func (d *DetachedEdge) String() string {
+	if d.inVertex != nil && d.outVertex != nil {
+		return "e[" + d.id + "][" + d.inVertex.id + "-" + d.label + "->" + d.outVertex.id + "]"
+	}
+	return "e[" + d.id + "]"
+}
+
 type DetachedPath struct {
 	objects []interface{}
 	labels  [][]string
@@ -292,4 +324,12 @@ func (d *DetachedPath) Objects() []interface{} {
 
 func (d *DetachedPath) Labels() [][]string {
 	return d.labels
+}
+
+func (d *DetachedPath) String() string {
+	var output []string
+	for _, o := range d.objects {
+		output = append(output, fmt.Sprint(o))
+	}
+	return fmt.Sprintf("path[%s]", strings.Join(output, ","))
 }

@@ -13,6 +13,10 @@
 
 package graph
 
+import (
+	"fmt"
+)
+
 type Element interface {
 	// Gets the unique identifier for the graph Element
 	Id() string
@@ -47,6 +51,8 @@ type Property interface {
 
 	// Get the element that this property is associated with
 	PElement() Element
+
+	fmt.Stringer
 }
 
 // Vertex <--  Element
@@ -64,6 +70,8 @@ type Vertex interface {
 
 	// Get slice of properties with provide keys
 	VProperties(keys ...string) []VertexProperty
+
+	fmt.Stringer
 }
 
 // VertexProperty <-- Property
@@ -88,6 +96,8 @@ type Edge interface {
 
 	// Get the incoming vertex of the edge
 	OutVertex() Vertex
+
+	fmt.Stringer
 }
 
 // Path for GDB
@@ -97,4 +107,6 @@ type Path interface {
 	Objects() []interface{}
 
 	Labels() [][]string
+
+	fmt.Stringer
 }

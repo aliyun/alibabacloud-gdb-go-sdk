@@ -18,7 +18,7 @@ import (
 	"testing"
 )
 
-func TestNewDetachedProperty(t *testing.T) {
+func TestNewDetachedElement(t *testing.T) {
 	Convey("create new property", t, func() {
 		propKey := "prop_Key"
 		propValue := "prop_Value"
@@ -27,6 +27,8 @@ func TestNewDetachedProperty(t *testing.T) {
 		So(prop.PKey(), ShouldEqual, propKey)
 		So(prop.PValue(), ShouldEqual, propValue)
 		So(prop.PElement(), ShouldBeNil)
+
+		So(prop.String(), ShouldEqual, "p[prop_Key->prop_Value]")
 	})
 
 	Convey("create new element", t, func() {
@@ -50,7 +52,9 @@ func TestNewDetachedProperty(t *testing.T) {
 
 		So(element.Values("weight", "name")[0], ShouldEqual, 67.2)
 	})
+}
 
+func TestNewDetachedEdge(t *testing.T) {
 	Convey("create new edge", t, func() {
 		edge := NewDetachedEdge(NewDetachedElement("gdbId", "gdbLabel"))
 		edge.SetProperty("time", NewDetachedProperty("time", "2019-11-29", nil))
@@ -61,6 +65,8 @@ func TestNewDetachedProperty(t *testing.T) {
 		So(edge.Property("is_delete").PValue(), ShouldEqual, false)
 		So(len(edge.Properties()), ShouldEqual, 2)
 
+		So(edge.String(), ShouldEqual, "e[gdbId]")
+
 		Convey("attach vertex to edge", func() {
 			vertex1 := NewDetachedVertex(NewDetachedElement("gdbVId1", "gdbVLabel1"))
 			vertex2 := NewDetachedVertex(NewDetachedElement("gdbVId2", "gdbVLabel2"))
@@ -70,14 +76,20 @@ func TestNewDetachedProperty(t *testing.T) {
 
 			So(edge.OutVertex().Id(), ShouldEqual, "gdbVId1")
 			So(edge.InVertex().Label(), ShouldEqual, "gdbVLabel2")
+
+			So(edge.String(), ShouldEqual, "e[gdbId][gdbVId2-gdbLabel->gdbVId1]")
 		})
 	})
+}
 
+func TestNewDetachedVertex(t *testing.T) {
 	Convey("create new vertex", t, func() {
 		vertex := NewDetachedVertex(NewDetachedElement("gdbVId", "gdbVLabel"))
 
 		So(vertex.Id(), ShouldEqual, "gdbVId")
 		So(vertex.Label(), ShouldEqual, "gdbVLabel")
+
+		So(vertex.String(), ShouldEqual, "v[gdbVId]")
 
 		Convey("add vertex property", func() {
 			vertex.SetProperty("name", NewDetachedProperty("name", "Jack", nil))
@@ -91,15 +103,21 @@ func TestNewDetachedProperty(t *testing.T) {
 
 			So(vertex.VProperty("age").VElement(), ShouldEqual, vertex)
 			So(vertex.VProperty("age").PElement(), ShouldEqual, vertex)
+
+			So(vertex.String(), ShouldEqual, "v[gdbVId]")
 		})
 	})
+}
 
+func TestNewDetachedVertexProperty(t *testing.T) {
 	Convey("create new vertex property", t, func() {
 		vprop := NewDetachedVertexProperty(NewDetachedElement("gdbVId1", "name"), "Jack")
 
 		So(vprop.Id(), ShouldEqual, "gdbVId1")
 		So(vprop.PKey(), ShouldEqual, "name")
 		So(vprop.PValue(), ShouldEqual, "Jack")
+
+		So(vprop.String(), ShouldEqual, "vp[name->Jack]")
 
 		Convey("attach to vertex", func() {
 			vertex := NewDetachedVertex(NewDetachedElement("gdbVId1", "gdbVLabel1"))
@@ -110,6 +128,30 @@ func TestNewDetachedProperty(t *testing.T) {
 
 			So(vprop.VElement().Label(), ShouldEqual, vertex.Label())
 			So(vertex.Property("name").PElement(), ShouldEqual, vertex)
+
+			So(vertex.String(), ShouldEqual, "v[gdbVId1]")
 		})
+	})
+}
+
+func TestNewDetachedPath(t *testing.T) {
+	Convey("create new path", t, func() {
+		v1 := NewDetachedVertex(NewDetachedElement("gdbVId1", "gdbVLabel"))
+		v2 := NewDetachedVertex(NewDetachedElement("gdbVId2", "gdbVLabel"))
+
+		e1 := NewDetachedEdge(NewDetachedElement("gdbIdE1", "gdbELabel"))
+
+		e1.SetVertex(true, v2)
+		e1.SetVertex(false, v1)
+
+		path := NewDetachedPath()
+		labels := make([]string, 1, 1)
+		labels[0] = ""
+		path.Extend(v1, labels)
+		path.Extend(e1, labels)
+		path.Extend(v2, labels)
+
+		So(path.Size(), ShouldEqual, 3)
+		So(path.String(), ShouldEqual, "path[v[gdbVId1],e[gdbIdE1][gdbVId1-gdbELabel->gdbVId2],v[gdbVId2]]")
 	})
 }

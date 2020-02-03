@@ -85,14 +85,11 @@ func main() {
 
 	for _, result := range results {
 		e := result.GetEdge()
-
-		log.Printf("get edge[id:%s, label:%s, propLen %d]", e.Id(), e.Label(), len(e.Properties()))
-		log.Printf(" inVertex [id:%s, label: %s]", e.InVertex().Id(), e.InVertex().Label())
-		log.Printf(" outVertex [id:%s, label: %s]", e.OutVertex().Id(), e.OutVertex().Label())
+		log.Printf("get edge: %s", e.String())
 
 		// read vertex property
 		for _, p := range e.Properties() {
-			log.Printf(" {PK: %s, PV: %f}", p.PKey(), p.PValue().(float64))
+			log.Printf("prop: %s", p.String())
 		}
 	}
 

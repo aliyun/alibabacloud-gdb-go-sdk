@@ -64,11 +64,11 @@ func main() {
 	// get response, add vertex should return a Vertex
 	for _, result := range results {
 		v := result.GetVertex()
-		log.Printf("get vertex[id:%s, label:%s, propLen %d", v.Id(), v.Label(), len(v.Properties()))
+		log.Printf("get vertex: %s", v.String())
 
 		// read vertex property
 		for _, p := range v.Properties() {
-			log.Printf(" {PK: %s, PV: %s}", p.PKey(), p.PValue().(string))
+			log.Printf("prop: %s", p.String())
 		}
 	}
 
@@ -88,11 +88,11 @@ func main() {
 	// get response, add vertex should return a Vertex
 	for _, result := range results {
 		v := result.GetVertex()
-		log.Printf("get vertex[id:%s, label:%s, propLen %d", v.Id(), v.Label(), len(v.Properties()))
+		log.Printf("get vertex: %s", v.String())
 
 		// read vertex property
 		for _, p := range v.VProperties() {
-			log.Printf(" {PK: %s, PV: %s}", p.PKey(), p.PValue().(string))
+			log.Printf("prop: %s", p.String())
 		}
 	}
 
