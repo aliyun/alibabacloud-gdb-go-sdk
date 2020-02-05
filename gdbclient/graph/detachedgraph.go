@@ -294,10 +294,15 @@ func (d *DetachedEdge) OutVertex() Vertex {
 }
 
 func (d *DetachedEdge) String() string {
-	if d.inVertex != nil && d.outVertex != nil {
-		return "e[" + d.id + "][" + d.inVertex.id + "-" + d.label + "->" + d.outVertex.id + "]"
+	inId := "?"
+	outId := "?"
+	if d.inVertex != nil {
+		inId = d.inVertex.id
 	}
-	return "e[" + d.id + "]"
+	if d.outVertex != nil {
+		outId = d.outVertex.id
+	}
+	return "e[" + d.id + "][" + outId + "-" + d.label + "->" + inId + "]"
 }
 
 type DetachedPath struct {

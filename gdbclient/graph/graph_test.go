@@ -65,7 +65,7 @@ func TestNewDetachedEdge(t *testing.T) {
 		So(edge.Property("is_delete").PValue(), ShouldEqual, false)
 		So(len(edge.Properties()), ShouldEqual, 2)
 
-		So(edge.String(), ShouldEqual, "e[gdbId]")
+		So(edge.String(), ShouldEqual, "e[gdbId][?-gdbLabel->?]")
 
 		Convey("attach vertex to edge", func() {
 			vertex1 := NewDetachedVertex(NewDetachedElement("gdbVId1", "gdbVLabel1"))
@@ -77,7 +77,7 @@ func TestNewDetachedEdge(t *testing.T) {
 			So(edge.OutVertex().Id(), ShouldEqual, "gdbVId1")
 			So(edge.InVertex().Label(), ShouldEqual, "gdbVLabel2")
 
-			So(edge.String(), ShouldEqual, "e[gdbId][gdbVId2-gdbLabel->gdbVId1]")
+			So(edge.String(), ShouldEqual, "e[gdbId][gdbVId1-gdbLabel->gdbVId2]")
 		})
 	})
 }
@@ -141,8 +141,8 @@ func TestNewDetachedPath(t *testing.T) {
 
 		e1 := NewDetachedEdge(NewDetachedElement("gdbIdE1", "gdbELabel"))
 
-		e1.SetVertex(true, v2)
-		e1.SetVertex(false, v1)
+		e1.SetVertex(true, v1)
+		e1.SetVertex(false, v2)
 
 		path := NewDetachedPath()
 		labels := make([]string, 1, 1)
