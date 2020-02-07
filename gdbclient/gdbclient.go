@@ -14,6 +14,7 @@
 package gdbclient
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
@@ -222,9 +223,11 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	}
 	defer c.connPool.Put(conn)
 
+	bindingsStr, _ := json.Marshal(request.Args[internal.ARGS_BINDINGS])
 	// send request to connection, and return future
 	internal.Logger.Info("submit script",
 		zap.String("dsl", request.Args[internal.ARGS_GREMLIN].(string)),
+		zap.String("bindings", string(bindingsStr)),
 		zap.String("processor", request.Processor))
 	return conn.SubmitRequestAsync(request)
 }
