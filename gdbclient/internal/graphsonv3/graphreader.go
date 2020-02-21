@@ -70,9 +70,10 @@ const (
 	gTypeDouble = "g:Double"
 	gTypeString = "g:String" // no string type in '@type'
 
-	gTypeList = "g:List"
-	gTypeMap  = "g:Map"
-	gTypeSet  = "g:Set"
+	gTypeList    = "g:List"
+	gTypeMap     = "g:Map"
+	gTypeSet     = "g:Set"
+	gTypeBulkSet = "g:BulkSet"
 
 	gTypeT = "g:T" // gremlin graph element type string
 
@@ -96,6 +97,7 @@ func init() {
 		gTypeList:           getList,
 		gTypeMap:            getMap,
 		gTypeSet:            getSet,
+		gTypeBulkSet:        getBulkSet,
 		gTypeVertex:         getVertex,
 		gTypeEdge:           getEdge,
 		gTypeVertexProperty: getVertexProperty,
@@ -273,6 +275,34 @@ func getMap(r *result) (interface{}, error) {
 		result[key] = value
 	}
 
+	return result, nil
+}
+
+func getBulkSet(r *result) (interface{}, error) {
+	result := graph.NewBulkSet()
+
+	v, err := resultListRouter(r.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(v)%2 != 0 {
+		// nu-pair bulkSet key-value
+		return nil, internal.NewDeserializerError("bulkSet", r.Value, errors.New("un-pair bulkSet"))
+	}
+
+	for i := 0; i < len(v); {
+		key := v[i]
+		i++
+		value := v[i]
+		i++
+
+		if vp, ok := value.(int64); ok {
+			result.Add(key, vp)
+		} else {
+			internal.Logger.Error("graphSonV3 bulkSet value type error", zap.Any("value", value))
+		}
+	}
 	return result, nil
 }
 

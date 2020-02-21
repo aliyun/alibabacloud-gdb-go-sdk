@@ -408,6 +408,35 @@ var (
     }
 }
 `
+	resp_bulkSet = `
+{
+    "@type": "g:BulkSet",
+    "@value": [
+        {
+            "@type": "g:Vertex",
+            "@value": {
+                "id": "marko",
+                "label": "person"
+            }
+        },
+        {
+            "@type": "g:Int64",
+            "@value": 4
+        },
+        {
+            "@type": "g:Vertex",
+            "@value": {
+                "id": "josh",
+                "label": "person"
+            }
+        },
+        {
+            "@type": "g:Int64",
+            "@value": 5
+        }
+    ]
+}
+`
 )
 
 func TestGetResult(t *testing.T) {
@@ -754,5 +783,20 @@ func TestGetResult(t *testing.T) {
 			So(v6.Id(), ShouldEqual, "5")
 			So(v6.Label(), ShouldEqual, "software")
 		})
+	})
+
+	Convey("bulkSet", t, func() {
+		Convey("bulkSet with vertex", func() {
+			ret, err := resultRouter([]byte(resp_bulkSet))
+			So(err, ShouldBeNil)
+			So(ret, ShouldNotBeNil)
+
+			b, ok := ret.(*graph.BulkSet)
+			So(ok, ShouldBeTrue)
+
+			So(b.UniqueSize(), ShouldEqual, 2)
+			So(b.Size(), ShouldEqual, 9)
+		})
+
 	})
 }

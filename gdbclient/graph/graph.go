@@ -15,6 +15,7 @@ package graph
 
 import (
 	"fmt"
+	"strings"
 )
 
 type Element interface {
@@ -109,4 +110,44 @@ type Path interface {
 	Labels() [][]string
 
 	fmt.Stringer
+}
+
+type BulkSet struct {
+	values map[interface{}]int64
+}
+
+func NewBulkSet() *BulkSet {
+	return &BulkSet{values: make(map[interface{}]int64, 0)}
+}
+
+func (b *BulkSet) Add(s interface{}, bulk int64) {
+	b.values[s] = bulk
+}
+
+func (b *BulkSet) UniqueSize() int {
+	return len(b.values)
+}
+
+func (b *BulkSet) Size() int {
+	var count int64 = 0
+	for _, v := range b.values {
+		count += v
+	}
+	return int(count)
+}
+
+func (b *BulkSet) IsEmpty() bool {
+	return len(b.values) == 0
+}
+
+func (b *BulkSet) AsBulk() map[interface{}]int64 {
+	return b.values
+}
+
+func (b *BulkSet) String() string {
+	var output []string
+	for k, v := range b.values {
+		output = append(output, fmt.Sprintf("{%v : %d}", k, v))
+	}
+	return fmt.Sprintf("{%s}", strings.Join(output, ","))
 }

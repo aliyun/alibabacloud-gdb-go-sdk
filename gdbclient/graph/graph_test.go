@@ -155,3 +155,19 @@ func TestNewDetachedPath(t *testing.T) {
 		So(path.String(), ShouldEqual, "path[v[gdbVId1],e[gdbIdE1][gdbVId1-gdbELabel->gdbVId2],v[gdbVId2]]")
 	})
 }
+
+func TestNewBulkSet(t *testing.T) {
+	Convey("create new bulkSet", t, func() {
+		v1 := NewDetachedVertex(NewDetachedElement("gdbVId1", "gdbVLabel"))
+		v2 := NewDetachedVertex(NewDetachedElement("gdbVId2", "gdbVLabel"))
+
+		bulk := NewBulkSet()
+		bulk.Add(v1, 20)
+		bulk.Add(v2, 87)
+
+		So(bulk.UniqueSize(), ShouldEqual, 2)
+		So(bulk.Size(), ShouldEqual, 107)
+		So(bulk.IsEmpty(), ShouldBeFalse)
+		So(bulk.String(), ShouldEqual, "{{v[gdbVId1] : 20},{v[gdbVId2] : 87}}")
+	})
+}
