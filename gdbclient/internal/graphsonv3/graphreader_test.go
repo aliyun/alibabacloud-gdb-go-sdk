@@ -257,6 +257,45 @@ var (
     }
 }
 `
+	resp_vertex_with_set_prop = `
+{
+    "@type": "g:Vertex",
+    "@value": {
+        "id": "2",
+        "label": "testb",
+        "properties": {
+            "name": [
+                {
+                    "@type": "g:VertexProperty",
+                    "@value": {
+                        "id": "2",
+                        "label": "name",
+                        "value": "Luck"
+                    }
+                }
+            ],
+            "phone": [
+                {
+                    "@type": "g:VertexProperty",
+                    "@value": {
+                        "id": "2",
+                        "label": "phone",
+                        "value": "1245098"
+                    }
+                },
+                {
+                    "@type": "g:VertexProperty",
+                    "@value": {
+                        "id": "2",
+                        "label": "phone",
+                        "value": "13876208"
+                    }
+                }
+            ]
+        }
+    }
+}
+`
 	resp_edge_only = `
 {
     "@type": "g:Edge",
@@ -687,6 +726,28 @@ func TestGetResult(t *testing.T) {
 			So(vprop2.PKey(), ShouldEqual, "name")
 			So(vprop2.PValue(), ShouldEqual, "Luck")
 			So(vprop2.VElement(), ShouldEqual, v)
+		})
+
+		Convey("vertex with set property", func() {
+			ret, err := resultRouter([]byte(resp_vertex_with_set_prop))
+			So(err, ShouldBeNil)
+			So(ret, ShouldNotBeNil)
+
+			v, ok := ret.(graph.Vertex)
+			So(ok, ShouldBeTrue)
+			So(v.Id(), ShouldEqual, "2")
+			So(v.Label(), ShouldEqual, "testb")
+
+			So(len(v.Properties()), ShouldEqual, 3)
+
+			vprop1 := v.VProperties("name")
+			So(len(vprop1), ShouldEqual, 1)
+			So(vprop1[0].PValue(), ShouldEqual, "Luck")
+
+			vprop2 := v.VProperties("phone")
+			So(len(vprop2), ShouldEqual, 2)
+			So(vprop2[0].PValue(), ShouldEqual, "1245098")
+			So(vprop2[1].PValue(), ShouldEqual, "13876208")
 		})
 	})
 

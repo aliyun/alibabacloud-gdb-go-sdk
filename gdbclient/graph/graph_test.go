@@ -34,31 +34,17 @@ func TestNewDetachedElement(t *testing.T) {
 	Convey("create new element", t, func() {
 		element := NewDetachedElement("gdbId", "gdbLabel")
 
-		element.SetProperty("name", NewDetachedProperty("name", "Jack", nil))
-		element.SetProperty("age", NewDetachedProperty("age", 32, nil))
-		element.SetProperty("weight", NewDetachedProperty("weight", 67.2, nil))
-
 		So(element.Id(), ShouldEqual, "gdbId")
 		So(element.Label(), ShouldEqual, "gdbLabel")
-
-		So(element.Property("name").PKey(), ShouldEqual, "name")
-		So(element.Property("name").PValue(), ShouldEqual, "Jack")
-
-		So(element.Value("age"), ShouldEqual, 32)
-
-		So(len(element.Keys()), ShouldEqual, 3)
-		So(len(element.Values()), ShouldEqual, 3)
-		So(len(element.Properties()), ShouldEqual, 3)
-
-		So(element.Values("weight", "name")[0], ShouldEqual, 67.2)
+		So(element.properties, ShouldBeNil)
 	})
 }
 
 func TestNewDetachedEdge(t *testing.T) {
 	Convey("create new edge", t, func() {
 		edge := NewDetachedEdge(NewDetachedElement("gdbId", "gdbLabel"))
-		edge.SetProperty("time", NewDetachedProperty("time", "2019-11-29", nil))
-		edge.SetProperty("is_delete", NewDetachedProperty("is_delete", false, nil))
+		edge.AddProperty(NewDetachedProperty("time", "2019-11-29", nil))
+		edge.AddProperty(NewDetachedProperty("is_delete", false, nil))
 
 		So(edge.Id(), ShouldEqual, "gdbId")
 		So(edge.Label(), ShouldEqual, "gdbLabel")
@@ -82,6 +68,22 @@ func TestNewDetachedEdge(t *testing.T) {
 	})
 }
 
+func TestNewDetachedEdgeWithProperty(t *testing.T) {
+	Convey("create new edge with prop", t, func() {
+		edge := NewDetachedEdge(NewDetachedElement("gdbId", "gdbLabel"))
+		edge.AddProperty(NewDetachedProperty("time", "2019-11-29", nil))
+		edge.AddProperty(NewDetachedProperty("is_delete", false, nil))
+
+		So(len(edge.Properties()), ShouldEqual, 2)
+		So(len(edge.Properties("time")), ShouldEqual, 1)
+
+		// edge don't support SET property
+		edge.AddProperty(NewDetachedProperty("time", "2019-11-30", nil))
+		So(len(edge.Properties("time")), ShouldEqual, 1)
+		So(edge.Property("time").PValue(), ShouldEqual, "2019-11-30")
+	})
+}
+
 func TestNewDetachedVertex(t *testing.T) {
 	Convey("create new vertex", t, func() {
 		vertex := NewDetachedVertex(NewDetachedElement("gdbVId", "gdbVLabel"))
@@ -92,8 +94,8 @@ func TestNewDetachedVertex(t *testing.T) {
 		So(vertex.String(), ShouldEqual, "v[gdbVId]")
 
 		Convey("add vertex property", func() {
-			vertex.SetProperty("name", NewDetachedProperty("name", "Jack", nil))
-			vertex.SetProperty("age", NewDetachedProperty("age", 32, nil))
+			vertex.AddProperty(NewDetachedVertexProperty(NewDetachedElement("gdbVId", "name"), "Jack"))
+			vertex.AddProperty(NewDetachedVertexProperty(NewDetachedElement("gdbVId", "age"), 32))
 
 			So(vertex.Property("name").PValue(), ShouldEqual, "Jack")
 			So(vertex.VProperty("name").Id(), ShouldEqual, vertex.Id())
@@ -101,11 +103,33 @@ func TestNewDetachedVertex(t *testing.T) {
 
 			So(vertex.VProperty("age"), ShouldHaveSameTypeAs, vertex.Property("age"))
 
-			So(vertex.VProperty("age").VElement(), ShouldEqual, vertex)
-			So(vertex.VProperty("age").PElement(), ShouldEqual, vertex)
-
 			So(vertex.String(), ShouldEqual, "v[gdbVId]")
 		})
+	})
+}
+
+func TestNewDetachedVertexWithProperty(t *testing.T) {
+	Convey("create new vertex with prop", t, func() {
+		vertex := NewDetachedVertex(NewDetachedElement("gdbVId", "gdbVLabel"))
+
+		vprop := NewDetachedVertexProperty(NewDetachedElement("gdbVId", "name"), "Jack")
+		vprop.SetVertex(vertex)
+		vertex.AddProperty(vprop)
+
+		vprop = NewDetachedVertexProperty(NewDetachedElement("gdbVId", "age"), 32)
+		vprop.SetVertex(vertex)
+		vertex.AddProperty(vprop)
+
+		vprop = NewDetachedVertexProperty(NewDetachedElement("gdbVId", "name"), "Luck")
+		vprop.SetVertex(vertex)
+		vertex.AddProperty(vprop)
+
+		So(len(vertex.VProperties("name")), ShouldEqual, 2)
+		So(len(vertex.VProperties("age")), ShouldEqual, 1)
+
+		So(len(vertex.Keys()), ShouldEqual, 2)
+		So(len(vertex.Values()), ShouldEqual, 3)
+		So(len(vertex.Values("name")), ShouldEqual, 2)
 	})
 }
 
@@ -124,7 +148,7 @@ func TestNewDetachedVertexProperty(t *testing.T) {
 
 			// double attach
 			vprop.SetVertex(vertex)
-			vertex.SetProperty(vprop.PKey(), vprop)
+			vertex.AddProperty(vprop)
 
 			So(vprop.VElement().Label(), ShouldEqual, vertex.Label())
 			So(vertex.Property("name").PElement(), ShouldEqual, vertex)

@@ -331,18 +331,20 @@ func getVertex(r *result) (interface{}, error) {
 
 	vertex := graph.NewDetachedVertex(graph.NewDetachedElement(v.Id, v.Label))
 
-	for _, prop := range v.Properties {
-		// FIXME: only take one item in one property
-		p, err := getVertexProperty(&prop[0])
-		if err != nil {
-			return nil, err
-		}
-		if vp, ok := p.(*graph.DetachedVertexProperty); ok {
-			// attach vertex to this prop
-			vp.SetVertex(vertex)
+	for _, props := range v.Properties {
+		for _, prop := range props {
+			p, err := getVertexProperty(&prop)
+			if err != nil {
+				return nil, err
+			}
 
-			// add prop to vertex element
-			vertex.SetProperty(vp.PKey(), vp)
+			if vp, ok := p.(*graph.DetachedVertexProperty); ok {
+				// attach vertex to this prop
+				vp.SetVertex(vertex)
+
+				// add prop to vertex element
+				vertex.AddProperty(vp)
+			}
 		}
 	}
 
@@ -386,7 +388,7 @@ func getEdge(r *result) (interface{}, error) {
 		}
 
 		if pp, ok := p.(*graph.DetachedProperty); ok {
-			edge.SetProperty(pp.PKey(), pp)
+			edge.AddProperty(pp)
 		}
 	}
 

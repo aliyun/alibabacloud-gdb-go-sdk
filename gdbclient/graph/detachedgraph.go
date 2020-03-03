@@ -22,15 +22,11 @@ import (
 type DetachedElement struct {
 	id         string
 	label      string
-	properties map[string]Property
+	properties map[string][]Property
 }
 
 func NewDetachedElement(id string, label string) *DetachedElement {
-	return &DetachedElement{id: id, label: label, properties: map[string]Property{}}
-}
-
-func (d *DetachedElement) SetProperty(key string, prop Property) {
-	d.properties[key] = prop
+	return &DetachedElement{id: id, label: label, properties: nil}
 }
 
 func (d *DetachedElement) Id() string {
@@ -47,7 +43,7 @@ func (d *DetachedElement) Property(key string) Property {
 	}
 
 	if v, ok := d.properties[key]; ok {
-		return v
+		return v[0]
 	}
 	return nil
 }
@@ -60,12 +56,12 @@ func (d *DetachedElement) Properties(keys ...string) []Property {
 	var props []Property
 	if keys == nil {
 		for _, v := range d.properties {
-			props = append(props, v)
+			props = append(props, v...)
 		}
 	} else {
 		for _, key := range keys {
 			if v, ok := d.properties[key]; ok {
-				props = append(props, v)
+				props = append(props, v...)
 			}
 		}
 	}
@@ -78,7 +74,7 @@ func (d *DetachedElement) Value(key string) interface{} {
 	}
 
 	if v, ok := d.properties[key]; ok {
-		return v.PValue()
+		return v[0].PValue()
 	}
 	return nil
 }
@@ -91,12 +87,16 @@ func (d *DetachedElement) Values(keys ...string) []interface{} {
 	var values []interface{}
 	if keys == nil {
 		for _, v := range d.properties {
-			values = append(values, v.PValue())
+			for _, p := range v {
+				values = append(values, p.PValue())
+			}
 		}
 	} else {
 		for _, key := range keys {
 			if v, ok := d.properties[key]; ok {
-				values = append(values, v.PValue())
+				for _, p := range v {
+					values = append(values, p.PValue())
+				}
 			}
 		}
 	}
@@ -165,35 +165,14 @@ func (d *DetachedVertex) Vertices(out bool, label ...string) []Vertex {
 	return nil
 }
 
-func (d *DetachedVertex) Property(key string) Property {
-	return d.VProperty(key)
-}
-
-func (d *DetachedVertex) Properties(keys ...string) []Property {
-	i := 0
-	vprops := d.VProperties(keys...)
-	props := make([]Property, len(vprops), len(vprops))
-	for _, p := range vprops {
-		props[i] = p
-		i++
-	}
-	return props
-}
-
 func (d *DetachedVertex) VProperty(key string) VertexProperty {
 	if d.properties == nil {
 		return nil
 	}
 
 	if v, ok := d.properties[key]; ok {
-		if vp, ok := v.(VertexProperty); ok {
+		if vp, ok := v[0].(VertexProperty); ok {
 			return vp
-		} else {
-			// here 'v' is Property
-			return &DetachedVertexProperty{
-				vertex:          d,
-				value:           v.PValue(),
-				DetachedElement: &DetachedElement{id: d.Id(), label: v.PKey()}}
 		}
 	}
 	return nil
@@ -206,15 +185,32 @@ func (d *DetachedVertex) VProperties(keys ...string) []VertexProperty {
 
 	var vprops []VertexProperty
 	if keys == nil {
-		for k := range d.properties {
-			vprops = append(vprops, d.VProperty(k))
+		for _, v := range d.properties {
+			for _, vp := range v {
+				vprops = append(vprops, vp.(VertexProperty))
+			}
 		}
 	} else {
 		for _, k := range keys {
-			vprops = append(vprops, d.VProperty(k))
+			if v, ok := d.properties[k]; ok {
+				for _, vp := range v {
+					vprops = append(vprops, vp.(VertexProperty))
+				}
+			}
 		}
 	}
 	return vprops
+}
+
+func (d *DetachedVertex) AddProperty(vp VertexProperty) {
+	if d.properties == nil {
+		d.properties = make(map[string][]Property)
+	}
+	if props, ok := d.properties[vp.PKey()]; ok {
+		d.properties[vp.PKey()] = append(props, vp)
+	} else {
+		d.properties[vp.PKey()] = []Property{vp}
+	}
 }
 
 func (d *DetachedVertex) String() string {
@@ -291,6 +287,13 @@ func (d *DetachedEdge) InVertex() Vertex {
 
 func (d *DetachedEdge) OutVertex() Vertex {
 	return d.outVertex
+}
+
+func (d *DetachedEdge) AddProperty(p Property) {
+	if d.properties == nil {
+		d.properties = make(map[string][]Property)
+	}
+	d.properties[p.PKey()] = []Property{p}
 }
 
 func (d *DetachedEdge) String() string {
