@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/pool"
@@ -42,11 +43,11 @@ const (
 type ClientShell interface {
 	SubmitScript(gremlin string) ([]Result, error)
 	SubmitScriptBound(gremlin string, bindings map[string]interface{}) ([]Result, error)
-	SubmitScriptOptions(gremlin string, options *internal.RequestOptions) ([]Result, error)
+	SubmitScriptOptions(gremlin string, options *graph.RequestOptions) ([]Result, error)
 
 	SubmitScriptAsync(gremlin string) (ResultSetFuture, error)
 	SubmitScriptBoundAsync(gremlin string, bindings map[string]interface{}) (ResultSetFuture, error)
-	SubmitScriptOptionsAsync(gremlin string, options *internal.RequestOptions) (ResultSetFuture, error)
+	SubmitScriptOptionsAsync(gremlin string, options *graph.RequestOptions) (ResultSetFuture, error)
 }
 
 // session client support batch submit
@@ -107,11 +108,11 @@ func (c *baseClient) SubmitScript(gremlin string) ([]Result, error) {
 }
 
 func (c *baseClient) SubmitScriptBound(gremlin string, bindings map[string]interface{}) ([]Result, error) {
-	options := internal.NewRequestOptionsWithBindings(bindings)
+	options := graph.NewRequestOptionsWithBindings(bindings)
 	return c.SubmitScriptOptions(gremlin, options)
 }
 
-func (c *baseClient) SubmitScriptOptions(gremlin string, options *internal.RequestOptions) ([]Result, error) {
+func (c *baseClient) SubmitScriptOptions(gremlin string, options *graph.RequestOptions) ([]Result, error) {
 	if future, err := c.SubmitScriptOptionsAsync(gremlin, options); err != nil {
 		return nil, err
 	} else {
@@ -124,18 +125,18 @@ func (c *baseClient) SubmitScriptAsync(gremlin string) (ResultSetFuture, error) 
 }
 
 func (c *baseClient) SubmitScriptBoundAsync(gremlin string, bindings map[string]interface{}) (ResultSetFuture, error) {
-	options := internal.NewRequestOptionsWithBindings(bindings)
+	options := graph.NewRequestOptionsWithBindings(bindings)
 	return c.SubmitScriptOptionsAsync(gremlin, options)
 }
 
-func (c *baseClient) SubmitScriptOptionsAsync(gremlin string, options *internal.RequestOptions) (ResultSetFuture, error) {
+func (c *baseClient) SubmitScriptOptionsAsync(gremlin string, options *graph.RequestOptions) (ResultSetFuture, error) {
 	// set session args if session mode
 	if c.session {
 		if options == nil {
-			options = internal.NewRequestOptionsWithBindings(nil)
+			options = graph.NewRequestOptionsWithBindings(nil)
 		}
-		options.AddArgs(internal.ARGS_SESSION, c.sessionId)
-		options.AddArgs(internal.ARGS_MANAGE_TRANSACTION, c.setting.IsManageTransaction)
+		options.AddArgs(graph.ARGS_SESSION, c.sessionId)
+		options.AddArgs(graph.ARGS_MANAGE_TRANSACTION, c.setting.IsManageTransaction)
 	}
 
 	request, err := graphsonv3.MakeRequestWithOptions(gremlin, options)
@@ -194,9 +195,9 @@ func (c *baseClient) closeSession() {
 }
 
 func (c *baseClient) transaction(ops string) error {
-	options := internal.NewRequestOptionsWithBindings(nil)
-	options.AddArgs(internal.ARGS_SESSION, c.sessionId)
-	options.AddArgs(internal.ARGS_MANAGE_TRANSACTION, c.setting.IsManageTransaction)
+	options := graph.NewRequestOptionsWithBindings(nil)
+	options.AddArgs(graph.ARGS_SESSION, c.sessionId)
+	options.AddArgs(graph.ARGS_MANAGE_TRANSACTION, c.setting.IsManageTransaction)
 
 	request, err := graphsonv3.MakeRequestWithOptions(ops, options)
 	if err != nil {
@@ -223,10 +224,10 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	}
 	defer c.connPool.Put(conn)
 
-	bindingsStr, _ := json.Marshal(request.Args[internal.ARGS_BINDINGS])
+	bindingsStr, _ := json.Marshal(request.Args[graph.ARGS_BINDINGS])
 	// send request to connection, and return future
 	internal.Logger.Info("submit script",
-		zap.String("dsl", request.Args[internal.ARGS_GREMLIN].(string)),
+		zap.String("dsl", request.Args[graph.ARGS_GREMLIN].(string)),
 		zap.String("bindings", string(bindingsStr)),
 		zap.String("processor", request.Processor))
 	return conn.SubmitRequestAsync(request)

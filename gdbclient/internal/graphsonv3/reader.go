@@ -16,6 +16,7 @@ package graphsonv3
 import (
 	"encoding/json"
 	"errors"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"go.uber.org/zap"
 )
@@ -133,13 +134,13 @@ func ReadResponse(msg []byte) (*Response, error) {
 			response.Data = err
 		} else {
 			attributes := ret.(map[interface{}]interface{})
-			stackTrace, ok := attributes[internal.STATUS_ATTRIBUTE_STACK_TRACE].(string)
+			stackTrace, ok := attributes[graph.STATUS_ATTRIBUTE_STACK_TRACE].(string)
 			if !ok {
 				internal.Logger.Error("response attributes stack trace", zap.Int("code", response.Code), zap.String("raw", string(status.Attributes)))
 			}
 
 			var execptions_str []string
-			if exceptions, ok := attributes[internal.STATUS_ATTRIBUTE_EXCEPTIONS].([]interface{}); ok {
+			if exceptions, ok := attributes[graph.STATUS_ATTRIBUTE_EXCEPTIONS].([]interface{}); ok {
 				execptions_str = make([]string, len(exceptions), len(exceptions))
 				for i := 0; i < len(exceptions); i++ {
 					if execptions_str[i], ok = exceptions[i].(string); !ok {

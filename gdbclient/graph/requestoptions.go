@@ -11,7 +11,7 @@
  * @date : 2019/12/3
  */
 
-package internal
+package graph
 
 // GDB request options
 type RequestOptions struct {

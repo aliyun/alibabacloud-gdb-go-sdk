@@ -16,7 +16,7 @@ package graphsonv3
 import (
 	"encoding/base64"
 	"encoding/json"
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/google/uuid"
 )
 
@@ -50,20 +50,20 @@ func SerializerRequest(request *Request) ([]byte, error) {
 }
 
 func MakeRequestCloseSession(sessionId string) *Request {
-	request := &Request{Op: internal.OPS_CLOSE, Args: make(map[string]interface{})}
+	request := &Request{Op: graph.OPS_CLOSE, Args: make(map[string]interface{})}
 
 	id, _ := GenUUID()
 	request.RequestID = id.String()
 
 	request.Processor = "session"
-	request.Args[internal.ARGS_SESSION] = sessionId
-	request.Args[internal.ARGS_GREMLIN] = "session.close()"
+	request.Args[graph.ARGS_SESSION] = sessionId
+	request.Args[graph.ARGS_GREMLIN] = "session.close()"
 
 	return request
 }
 
-func MakeRequestWithOptions(gremlin string, options *internal.RequestOptions) (*Request, error) {
-	request := &Request{Op: internal.OPS_EVAL, Args: make(map[string]interface{})}
+func MakeRequestWithOptions(gremlin string, options *graph.RequestOptions) (*Request, error) {
+	request := &Request{Op: graph.OPS_EVAL, Args: make(map[string]interface{})}
 
 	// override requestId
 	if options != nil {
@@ -77,8 +77,8 @@ func MakeRequestWithOptions(gremlin string, options *internal.RequestOptions) (*
 		}
 	}
 	// set specific configurations
-	request.Args[internal.ARGS_GREMLIN] = gremlin
-	request.Args[internal.ARGS_LANGUAGE] = "gremlin-groovy"
+	request.Args[graph.ARGS_GREMLIN] = gremlin
+	request.Args[graph.ARGS_LANGUAGE] = "gremlin-groovy"
 
 	// send request now if options is nil
 	if options == nil {
@@ -87,14 +87,14 @@ func MakeRequestWithOptions(gremlin string, options *internal.RequestOptions) (*
 
 	// set optional args if they were made available
 	if timeout := options.GetTimeout(); timeout > 0 {
-		request.Args[internal.ARGS_SCRIPT_EVAL_TIMEOUT] = timeout
+		request.Args[graph.ARGS_SCRIPT_EVAL_TIMEOUT] = timeout
 	}
 
 	session := false
 	if args := options.GetArgs(); args != nil && len(args) > 0 {
 		for k, v := range args {
 			request.Args[k] = v
-			if k == internal.ARGS_SESSION {
+			if k == graph.ARGS_SESSION {
 				session = true
 			}
 		}
@@ -114,11 +114,11 @@ func MakeAuthRequest(requestId string, username string, password string) (*Reque
 	copy(simpleAuth[len(username)+2:], password)
 
 	args := make(map[string]interface{})
-	args[internal.ARGS_SASL] = base64.StdEncoding.EncodeToString(simpleAuth)
+	args[graph.ARGS_SASL] = base64.StdEncoding.EncodeToString(simpleAuth)
 
 	request := &Request{
 		RequestID: requestId,
-		Op:        internal.OPS_AUTHENTICATION,
+		Op:        graph.OPS_AUTHENTICATION,
 		Processor: "traversal",
 		Args:      args,
 	}

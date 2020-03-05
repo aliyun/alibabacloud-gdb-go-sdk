@@ -11,7 +11,7 @@
  * @date : 2019/11/26
  */
 
-package internal
+package graph
 
 // refers to
 // https://github.com/apache/tinkerpop/blob/master/gremlin-driver/src/main/java/org/apache/tinkerpop/gremlin/driver/Tokens.java

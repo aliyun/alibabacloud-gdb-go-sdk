@@ -16,7 +16,7 @@ package graphsonv3
 import (
 	"encoding/json"
 	"errors"
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	. "github.com/smartystreets/goconvey/convey"
 	"testing"
 )
@@ -25,7 +25,7 @@ func TestSerializerRequest(t *testing.T) {
 	Convey("normal user request", t, func() {
 		req := &Request{RequestID: "testId", Op: "eval", Args: make(map[string]interface{})}
 
-		req.Args[internal.ARGS_GREMLIN] = "testDsl"
+		req.Args[graph.ARGS_GREMLIN] = "testDsl"
 
 		Convey("serializer request", func() {
 			msg, err := SerializerRequest(req)
@@ -61,13 +61,13 @@ func TestMakeRequestWithOptions(t *testing.T) {
 
 			So(req, ShouldNotBeNil)
 			So(req.RequestID, ShouldNotBeEmpty)
-			So(req.Op, ShouldEqual, internal.OPS_EVAL)
-			So(req.Args[internal.ARGS_GREMLIN], ShouldEqual, gremlin)
+			So(req.Op, ShouldEqual, graph.OPS_EVAL)
+			So(req.Args[graph.ARGS_GREMLIN], ShouldEqual, gremlin)
 		})
 
 		Convey("request with options", func() {
-			options := internal.NewRequestOptionsWithBindings(nil)
-			options.AddArgs(internal.ARGS_SCRIPT_EVAL_TIMEOUT, 300)
+			options := graph.NewRequestOptionsWithBindings(nil)
+			options.AddArgs(graph.ARGS_SCRIPT_EVAL_TIMEOUT, 300)
 
 			Convey("options with nil request id", func() {
 				req, err := MakeRequestWithOptions(gremlin, options)
@@ -75,7 +75,7 @@ func TestMakeRequestWithOptions(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(req, ShouldNotBeNil)
 				So(req.RequestID, ShouldNotBeEmpty)
-				So(req.Args[internal.ARGS_SCRIPT_EVAL_TIMEOUT], ShouldEqual, 300)
+				So(req.Args[graph.ARGS_SCRIPT_EVAL_TIMEOUT], ShouldEqual, 300)
 			})
 
 			Convey("options with request id and bindings", func() {
@@ -84,25 +84,25 @@ func TestMakeRequestWithOptions(t *testing.T) {
 				bindings := make(map[string]interface{})
 				bindings["testParam1"] = "testValue"
 				bindings["testParam2"] = 20
-				options.AddArgs(internal.ARGS_BINDINGS, bindings)
+				options.AddArgs(graph.ARGS_BINDINGS, bindings)
 
 				req, err := MakeRequestWithOptions(gremlin, options)
 				So(err, ShouldBeNil)
 				So(req, ShouldNotBeNil)
 				So(req.RequestID, ShouldEqual, "testId")
 
-				So(req.Args[internal.ARGS_BINDINGS], ShouldNotBeNil)
-				read_bindings := req.Args[internal.ARGS_BINDINGS].(map[string]interface{})
+				So(req.Args[graph.ARGS_BINDINGS], ShouldNotBeNil)
+				read_bindings := req.Args[graph.ARGS_BINDINGS].(map[string]interface{})
 				So(read_bindings, ShouldContainKey, "testParam1")
 				So(read_bindings, ShouldContainKey, "testParam2")
 			})
 		})
 
 		Convey("request with session options", func() {
-			options := internal.NewRequestOptionsWithBindings(nil)
+			options := graph.NewRequestOptionsWithBindings(nil)
 
-			options.AddArgs(internal.ARGS_SESSION, "session_id_33297979233")
-			options.AddArgs(internal.ARGS_MANAGE_TRANSACTION, true)
+			options.AddArgs(graph.ARGS_SESSION, "session_id_33297979233")
+			options.AddArgs(graph.ARGS_MANAGE_TRANSACTION, true)
 
 			Convey("option without bindings", func() {
 				req, err := MakeRequestWithOptions(gremlin, options)
@@ -110,14 +110,14 @@ func TestMakeRequestWithOptions(t *testing.T) {
 				So(err, ShouldBeNil)
 				So(req, ShouldNotBeNil)
 				So(req.Processor, ShouldEqual, "session")
-				So(req.Args[internal.ARGS_SESSION], ShouldEqual, "session_id_33297979233")
+				So(req.Args[graph.ARGS_SESSION], ShouldEqual, "session_id_33297979233")
 			})
 
 			Convey("request to close session", func() {
 				req := MakeRequestCloseSession("session_id_33297979233")
 
 				So(req.Processor, ShouldEqual, "session")
-				So(req.Op, ShouldEqual, internal.OPS_CLOSE)
+				So(req.Op, ShouldEqual, graph.OPS_CLOSE)
 			})
 		})
 	})
@@ -145,7 +145,7 @@ func TestMakeAuthRequest(t *testing.T) {
 			})
 
 			Convey("The request op is special", func() {
-				So(req.Op, ShouldEqual, internal.OPS_AUTHENTICATION)
+				So(req.Op, ShouldEqual, graph.OPS_AUTHENTICATION)
 			})
 		})
 	})

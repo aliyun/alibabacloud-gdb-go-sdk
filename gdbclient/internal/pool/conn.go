@@ -16,6 +16,7 @@ package pool
 import (
 	"encoding/json"
 	"errors"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
 	"github.com/gorilla/websocket"
@@ -286,7 +287,7 @@ func (cn *ConnWebSocket) writeWorker() {
 			// check pending or not
 			if _, ok := cn.PendingResponses.LoadOrStore(request.RequestID, future); ok {
 				// rewrite the same 'requestId' with pending requests
-				if request.Op != internal.OPS_AUTHENTICATION {
+				if request.Op != graph.OPS_AUTHENTICATION {
 					response := graphsonv3.NewErrorResponse(request.RequestID,
 						graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER,
 						errors.New("GDB: pending duplicate request id to server"))

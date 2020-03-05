@@ -14,7 +14,7 @@
 package pool
 
 import (
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
 	"github.com/google/uuid"
 	. "github.com/smartystreets/goconvey/convey"
@@ -86,7 +86,7 @@ func TestNewConnConn(t *testing.T) {
 			Convey("send dsl and no response content", func() {
 				bindings := make(map[string]interface{})
 				bindings["GDB___id"] = "___test_go_id_test___"
-				opt := internal.NewRequestOptionsWithBindings(bindings)
+				opt := graph.NewRequestOptionsWithBindings(bindings)
 
 				request, _ := graphsonv3.MakeRequestWithOptions("g.V(GDB___id)", opt)
 
@@ -125,7 +125,7 @@ func TestNewConnConn(t *testing.T) {
 			})
 
 			Convey("send dsl with request id", func() {
-				opt := internal.NewRequestOptionsWithBindings(nil)
+				opt := graph.NewRequestOptionsWithBindings(nil)
 				id, err := uuid.NewUUID()
 				So(err, ShouldBeNil)
 				opt.SetRequestId(id.String())
@@ -141,7 +141,7 @@ func TestNewConnConn(t *testing.T) {
 			})
 
 			Convey("send multi request in async with the same request id", func() {
-				opt := internal.NewRequestOptionsWithBindings(nil)
+				opt := graph.NewRequestOptionsWithBindings(nil)
 				id, err := uuid.NewUUID()
 				So(err, ShouldBeNil)
 				opt.SetRequestId(id.String())
