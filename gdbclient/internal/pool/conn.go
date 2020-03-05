@@ -204,9 +204,7 @@ func (cn *ConnWebSocket) Close() {
 	// close chan quit to wakeup all goroutine
 	close(cn.quit)
 
-	// send close message and close connect
-	cn.netConn.WriteMessage(websocket.CloseMessage,
-		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	// close connection
 	cn.netConn.Close()
 
 	// wait all goroutine exit
