@@ -157,3 +157,17 @@ func (r *Result) GetVertexProperty() graph.VertexProperty {
 	}
 	return nil
 }
+
+func (r *Result) GetMap() map[interface{}]interface{} {
+	if val, ok := r.value.(map[interface{}]interface{}); ok {
+		return val
+	}
+	return nil
+}
+
+func (r *Result) GetList() []interface{} {
+	if val, ok := r.value.([]interface{}); ok {
+		return val
+	}
+	return nil
+}
