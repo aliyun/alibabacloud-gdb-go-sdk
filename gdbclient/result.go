@@ -158,6 +158,13 @@ func (r *Result) GetVertexProperty() graph.VertexProperty {
 	return nil
 }
 
+func (r *Result) GetPath() *graph.DetachedPath {
+	if val, ok := r.value.(*graph.DetachedPath); ok {
+		return val
+	}
+	return nil
+}
+
 func (r *Result) GetMap() map[interface{}]interface{} {
 	if val, ok := r.value.(map[interface{}]interface{}); ok {
 		return val
