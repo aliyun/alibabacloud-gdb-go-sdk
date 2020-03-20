@@ -109,7 +109,7 @@ func (s *Settings) getOpts() *pool.Options {
 		MinIdleConns:       s.MinIdleConns,
 		MaxConnAge:         s.MaxConnAge,
 		PoolTimeout:        s.PoolTimeout,
-		IdleTimeout:        s.PoolTimeout,
+		IdleTimeout:        s.IdleTimeout,
 		IdleCheckFrequency: s.IdleCheckFrequency,
 		Dialer:             pool.NewConnWebSocket,
 	}
