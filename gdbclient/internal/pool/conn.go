@@ -16,6 +16,7 @@ package pool
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
@@ -387,11 +388,17 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 					dataList := make([]json.RawMessage, 1, 8)
 					dataList[0] = data
 					respChan.Data = dataList
+				} else {
+					internal.Logger.Error("append response",
+						zap.String("old", fmt.Sprint(respChan.Data)),
+						zap.String("append", fmt.Sprint(response.Data)))
 				}
 
-				newData := response.Data.(json.RawMessage)
-				dataList := respChan.Data.([]json.RawMessage)
-				respChan.Data = append(dataList, newData)
+				if newData, ok := response.Data.(json.RawMessage); ok {
+					if dataList, ok := respChan.Data.([]json.RawMessage); ok {
+						respChan.Data = append(dataList, newData)
+					}
+				}
 			}
 		})
 
