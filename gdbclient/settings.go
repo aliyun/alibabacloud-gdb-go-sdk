@@ -33,23 +33,10 @@ type Settings struct {
 
 	// maximum number of socket connections, Default is 8
 	PoolSize int
-	// Minimum number of idle connections
-	MinIdleConns int
-	// Amount of time after which client closes idle connections
-	// Default is 5 minutes, -1 disables idle timeout check
-	IdleTimeout time.Duration
-	// Frequency of idle checks made by idle connections reaper
-	// Default is 1 minute. -1 disables idle connections reaper, but idle
-	// connections are still discarded by the client if IdleTimeout is set
-	IdleCheckFrequency time.Duration
-	// Connection age at which client retires (closes) the connection.
-	// Default is to not close aged connections.
-	MaxConnAge time.Duration
 	// Amount of time client waits for connection if all connections
 	// are busy before returning an error.
 	// Default is ReadTimeout + 1 second.
 	PoolTimeout time.Duration
-
 	// Frequency of WebSocket ping checks, Default is 1 minute
 	PingInterval time.Duration
 	// max concurrent request pending on one connection, Default is 4
@@ -60,6 +47,19 @@ type Settings struct {
 	// Amount of time client waits connection io read before returning an error.
 	// Default is the same with WriteTimeout
 	ReadTimeout time.Duration
+	// Interval of time to check connection health status in pool, new connection will be
+	// created if someone broken in pool
+	// Default is 1min, set minus value will disable it
+	AliveCheckInterval time.Duration
+
+	// deprecated
+	MinIdleConns int
+	// deprecated
+	IdleTimeout time.Duration
+	// deprecated
+	IdleCheckFrequency time.Duration
+	// deprecated
+	MaxConnAge time.Duration
 }
 
 func (s *Settings) init() {
@@ -71,12 +71,6 @@ func (s *Settings) init() {
 	}
 	if s.PoolSize == 0 {
 		s.PoolSize = 8
-	}
-	if s.IdleTimeout == 0 {
-		s.IdleTimeout = 5 * time.Minute
-	}
-	if s.IdleCheckFrequency == 0 {
-		s.IdleCheckFrequency = 1 * time.Minute
 	}
 	if s.PingInterval == 0 {
 		s.PingInterval = 1 * time.Minute
@@ -93,44 +87,45 @@ func (s *Settings) init() {
 	if s.PoolTimeout == 0 {
 		s.PoolTimeout = s.ReadTimeout + 1
 	}
+	if s.AliveCheckInterval == 0 {
+		s.AliveCheckInterval = 1 * time.Minute
+	}
 }
 
 func (s *Settings) getOpts() *pool.Options {
 	return &pool.Options{
-		Endpoint:        s.Host + ":" + strconv.FormatInt(int64(s.Port), 10),
-		Username:        s.Username,
-		Password:        s.Password,
-		PingInterval:    s.PingInterval,
-		WriteTimeout:    s.WriteTimeout,
-		ReadTimeout:     s.ReadTimeout,
-		OnGoingRequests: s.MaxConcurrentRequest,
+		GdbUrl:       "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin",
+		Username:     s.Username,
+		Password:     s.Password,
+		PingInterval: s.PingInterval,
+		WriteTimeout: s.WriteTimeout,
+		ReadTimeout:  s.ReadTimeout,
 
-		PoolSize:           s.PoolSize,
-		MinIdleConns:       s.MinIdleConns,
-		MaxConnAge:         s.MaxConnAge,
-		PoolTimeout:        s.PoolTimeout,
-		IdleTimeout:        s.IdleTimeout,
-		IdleCheckFrequency: s.IdleCheckFrequency,
-		Dialer:             pool.NewConnWebSocket,
+		PoolSize:                    s.PoolSize,
+		PoolTimeout:                 s.PoolTimeout,
+		MaxInProcessPerConn:         s.MaxConcurrentRequest,
+		MaxSimultaneousUsagePerConn: s.MaxConcurrentRequest,
+		AliveCheckInterval:          s.AliveCheckInterval,
+
+		Dialer: pool.NewConnWebSocket,
 	}
 }
 
 func (s *Settings) getSessionOpts() *pool.Options {
 	return &pool.Options{
-		Endpoint:        s.Host + ":" + strconv.FormatInt(int64(s.Port), 10),
-		Username:        s.Username,
-		Password:        s.Password,
-		PingInterval:    s.PingInterval,
-		WriteTimeout:    s.WriteTimeout,
-		ReadTimeout:     s.ReadTimeout,
-		OnGoingRequests: 1,
+		GdbUrl:       "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin",
+		Username:     s.Username,
+		Password:     s.Password,
+		PingInterval: s.PingInterval,
+		WriteTimeout: s.WriteTimeout,
+		ReadTimeout:  s.ReadTimeout,
 
-		PoolSize:           1,
-		MinIdleConns:       1,
-		MaxConnAge:         -1,
-		PoolTimeout:        s.PoolTimeout,
-		IdleTimeout:        s.PingInterval * 5,
-		IdleCheckFrequency: s.PingInterval * 2,
-		Dialer:             pool.NewConnWebSocket,
+		PoolSize:                    1,
+		PoolTimeout:                 s.PoolTimeout,
+		MaxInProcessPerConn:         2,
+		MaxSimultaneousUsagePerConn: 2,
+		AliveCheckInterval:          s.AliveCheckInterval,
+
+		Dialer: pool.NewConnWebSocket,
 	}
 }

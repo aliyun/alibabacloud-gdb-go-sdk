@@ -15,113 +15,56 @@ package pool
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 var noDeadline = time.Time{}
 
-type Conn interface {
-	Close()
-	UsedAt() time.Time
-	CreatedAt() time.Time
-	SetPooled(bool)
-	Pooled() bool
-	Connected() bool
-	Disposed() bool
-
-	SubmitRequestAsync(request *graphsonv3.Request) (*graphsonv3.ResponseFuture, error)
-}
-
-type ConnMock struct {
-	createdAt time.Time
-	usedAt    time.Time
-	pooled    bool
-	connected bool
-	disposed  bool
-}
-
-func NewConnMock(opt *Options) (Conn, error) {
-	return &ConnMock{
-		createdAt: time.Now(),
-		usedAt:    time.Now(),
-		pooled:    false,
-		connected: true,
-		disposed:  false,
-	}, nil
-}
-
-func (cn *ConnMock) Close() {
-	cn.disposed = true
-	cn.connected = false
-}
-
-func (cn *ConnMock) UsedAt() time.Time {
-	return cn.usedAt
-}
-
-func (cn *ConnMock) CreatedAt() time.Time {
-	return cn.createdAt
-}
-
-func (cn *ConnMock) SetPooled(pooled bool) {
-	cn.pooled = pooled
-}
-
-func (cn *ConnMock) Pooled() bool {
-	return cn.pooled
-}
-
-func (cn *ConnMock) Connected() bool {
-	return cn.connected
-}
-
-func (cn *ConnMock) Disposed() bool {
-	return cn.disposed
-}
-
-func (cn *ConnMock) SubmitRequestAsync(request *graphsonv3.Request) (*graphsonv3.ResponseFuture, error) {
-	cn.usedAt = time.Now()
-	return nil, errors.New("not support")
+func zapPtr(conn *ConnWebSocket) zap.Field {
+	return zap.Uintptr("conn", uintptr(unsafe.Pointer(conn)))
 }
 
 type ConnWebSocket struct {
 	netConn          *websocket.Conn
-	inChan           chan *graphsonv3.ResponseFuture
-	PendingResponses *sync.Map
+	pendingResponses *sync.Map
+	pendingSize      int32
+	maxInProcess     int32
 
-	pooled    bool
 	createdAt time.Time
 	usedAt    int64 // atomic
+	borrowed  int32 // atomic
 
-	quit chan struct{}
-	wait *sync.WaitGroup
+	opt         *Options
+	notifier    pNotifier
+	releaseConn pReleaseConn
 
-	opt *Options
+	_broken bool
+	_closed uint32 // atomic
+	closeCn chan struct{}
 
-	connected bool
-	disposed  atomic.Value
-	sync.RWMutex
+	pingErrorsNum int
+	wLock         sync.Mutex
 }
 
-func NewConnWebSocket(opt *Options) (Conn, error) {
+func NewConnWebSocket(opt *Options) (*ConnWebSocket, error) {
 	dialer := websocket.Dialer{
 		WriteBufferSize:  1024 * 8,
 		ReadBufferSize:   1024 * 8,
 		HandshakeTimeout: 5 * time.Second,
 	}
 
-	url := "ws://" + opt.Endpoint + "/gremlin"
-	netConn, _, err := dialer.Dial(url, http.Header{})
+	netConn, _, err := dialer.Dial(opt.GdbUrl, http.Header{})
 	if err != nil {
 		return nil, err
 	}
@@ -130,33 +73,54 @@ func NewConnWebSocket(opt *Options) (Conn, error) {
 		opt:              opt,
 		netConn:          netConn,
 		createdAt:        time.Now(),
-		quit:             make(chan struct{}),
-		wait:             &sync.WaitGroup{},
-		PendingResponses: &sync.Map{},
-		connected:        true,
-		inChan:           make(chan *graphsonv3.ResponseFuture, opt.OnGoingRequests),
+		closeCn:          make(chan struct{}),
+		pendingResponses: &sync.Map{},
+		maxInProcess:     int32(opt.MaxInProcessPerConn),
 	}
 
-	// alive check handler
-	cn.netConn.SetPongHandler(
-		func(appData string) error {
-			cn.setConnected(true)
-			return nil
-		})
-
-	cn.disposed.Store(false)
 	cn.setUsedAt(time.Now())
 
-	cn.wait.Add(3)
 	// connect workers
-	go cn.ping()
-	go cn.writeWorker()
-	go cn.readWorker()
+	if opt.PingInterval > 0 {
+		go cn.connCheck(opt.PingInterval)
+	}
+	go cn.readResponse()
 
-	internal.Logger.Info("connect", zap.String("endpoint", opt.Endpoint),
-		zap.Duration("pingInterval", opt.PingInterval),
-		zap.Int("concurrent", opt.OnGoingRequests))
+	internal.Logger.Info("create connect", zap.String("url", opt.GdbUrl),
+		zap.Int("concurrent", opt.MaxInProcessPerConn), zapPtr(cn))
 	return cn, nil
+}
+
+func (cn *ConnWebSocket) String() string {
+	return fmt.Sprintf("conn<%p>: createAt %s, usedAt %s, borrowed %d, pending %d,"+
+		" broken %t, closed %t, pingErrorNum %d",
+		cn, cn.createdAt.Format("2006-01-02_3:04:05.000"),
+		cn.UsedAt().Format("2006-01-02_3:04:05.000"),
+		atomic.LoadInt32(&cn.borrowed), atomic.LoadInt32(&cn.pendingSize),
+		cn._broken, cn.closed(), cn.pingErrorsNum)
+}
+
+func (cn *ConnWebSocket) Close() {
+	if !atomic.CompareAndSwapUint32(&cn._closed, 0, 1) {
+		return
+	}
+
+	// close chan quit to wakeup all goroutine
+	close(cn.closeCn)
+
+	// close connection
+	cn.netConn.Close()
+
+	// fill complete all pending response future
+	cn.pendingResponses.Range(func(key, value interface{}) bool {
+		response := graphsonv3.NewErrorResponse(key.(string),
+			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER, errConnClosed)
+		value.(*graphsonv3.ResponseFuture).Complete(response)
+		return true
+	})
+	atomic.StoreInt32(&cn.pendingSize, 0)
+	cn.pendingResponses = &sync.Map{}
+	internal.Logger.Info("connect close", zapPtr(cn))
 }
 
 func (cn *ConnWebSocket) UsedAt() time.Time {
@@ -168,162 +132,93 @@ func (cn *ConnWebSocket) CreatedAt() time.Time {
 	return cn.createdAt
 }
 
-func (cn *ConnWebSocket) Connected() bool {
-	cn.RLock()
-	defer cn.RUnlock()
-	return cn.connected
-}
-
-func (cn *ConnWebSocket) Disposed() bool {
-	return cn.disposed.Load().(bool)
-}
-
-func (cn *ConnWebSocket) Pooled() bool {
-	return cn.pooled
-}
-
-func (cn *ConnWebSocket) SetPooled(pooled bool) {
-	cn.pooled = pooled
-}
-
 func (cn *ConnWebSocket) setUsedAt(tm time.Time) {
 	atomic.StoreInt64(&cn.usedAt, tm.Unix())
 }
 
-func (cn *ConnWebSocket) setConnected(connect bool) {
-	cn.Lock()
-	defer cn.Unlock()
-	cn.connected = connect
+func (cn *ConnWebSocket) setNotifier(n pNotifier) {
+	cn.notifier = n
 }
 
-func (cn *ConnWebSocket) Close() {
-	if cn.Disposed() {
-		return
+func (cn *ConnWebSocket) setReleaseConn(n pReleaseConn) {
+	cn.releaseConn = n
+}
+
+func (cn *ConnWebSocket) returnToPool() bool {
+	if cn.releaseConn != nil {
+		cn.releaseConn(cn)
 	}
-
-	cn.disposed.Store(true)
-	// close chan quit to wakeup all goroutine
-	close(cn.quit)
-
-	// close connection
-	cn.netConn.Close()
-
-	// wait all goroutine exit
-	cn.wait.Wait()
-	cn.setConnected(false)
-	close(cn.inChan)
-
-	// fill complete all pending response future
-	cn.PendingResponses.Range(func(key, value interface{}) bool {
-		response := graphsonv3.NewErrorResponse(key.(string),
-			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER,
-			errors.New("GDB: connection closed"))
-		value.(*graphsonv3.ResponseFuture).Complete(response)
-		return true
-	})
-	cn.PendingResponses = &sync.Map{}
-
-	internal.Logger.Info("connect close")
+	return true
 }
 
-func (cn *ConnWebSocket) ping() {
-	ticker := time.NewTicker(cn.opt.PingInterval)
+func (cn *ConnWebSocket) connCheck(frequency time.Duration) {
+	ticker := time.NewTicker(frequency)
+	defer ticker.Stop()
 
-	defer func() {
-		ticker.Stop()
-		cn.wait.Done()
-	}()
-
-	// ticker for ping
 	for {
-		if cn.Disposed() {
-			internal.Logger.Info("ping Done as disposed")
-			return
-		}
-
 		select {
 		case <-ticker.C:
-			connected := true
-			err := cn.netConn.WriteControl(websocket.PingMessage, []byte{}, cn.deadline(cn.opt.WriteTimeout))
+			// It is possible that ticker and closedCn arrive together,
+			// and select pseudo-randomly pick ticker case, we double
+			// check here to prevent being executed after closed.
+			if cn.closed() {
+				return
+			}
+			err := cn.doping(3)
 			if err != nil {
-				internal.Logger.Error("Ping failed", zap.Error(err))
-				connected = false
-			}
-			cn.setConnected(connected)
-		case <-cn.quit:
-			internal.Logger.Info("ping Done as quit")
-			return
-		}
-	}
-}
-
-func (cn *ConnWebSocket) writeWorker() {
-	defer cn.wait.Done()
-
-	for {
-		if cn.Disposed() {
-			internal.Logger.Info("write worker exit due to disposed")
-			return
-		}
-
-		select {
-		case future, ok := <-cn.inChan:
-			if !ok {
-				continue
-			}
-
-			request := future.Request()
-
-			// serializer request
-			outBuf, err := graphsonv3.SerializerRequest(request)
-			if err != nil {
-				response := graphsonv3.NewErrorResponse(request.RequestID,
-					graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_SERIALIZATION, err)
-				future.Complete(response)
-				continue
-			}
-
-			// check pending or not
-			if _, ok := cn.PendingResponses.LoadOrStore(request.RequestID, future); ok {
-				// rewrite the same 'requestId' with pending requests
-				if request.Op != graph.OPS_AUTHENTICATION {
-					response := graphsonv3.NewErrorResponse(request.RequestID,
-						graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER,
-						errors.New("GDB: pending duplicate request id to server"))
-					internal.Logger.Warn("request duplicate", zap.String("id ", request.RequestID))
-					future.Complete(response)
-					continue
+				cn.pingErrorsNum += 1
+				internal.Logger.Error("status check", zapPtr(cn), zap.Error(err))
+				if cn.pingErrorsNum >= 3 {
+					cn._broken = true
+					// wakeup pool to check connection status
+					_ = cn.notifier != nil && cn.notifier()
+					internal.Logger.Error("conn ping broken", zapPtr(cn))
+					return
 				}
+			} else {
+				cn.pingErrorsNum = 0
 			}
-
-			// send request to server
-			if err = cn.netConn.SetWriteDeadline(cn.deadline(cn.opt.WriteTimeout)); err == nil {
-				err = cn.netConn.WriteMessage(websocket.BinaryMessage, outBuf)
-			}
-
-			// check network write status and write back notifier to writer
-			if err != nil {
-				cn.PendingResponses.Delete(request.RequestID)
-
-				response := graphsonv3.NewErrorResponse(request.RequestID,
-					graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER, err)
-				future.Complete(response)
-				continue
-			}
-		case <-cn.quit:
-			internal.Logger.Info("Write Done as quit")
+		case <-cn.closeCn:
 			return
 		}
 	}
 }
 
-func (cn *ConnWebSocket) readWorker() {
+func (cn *ConnWebSocket) doping(retry int) error {
+	var err error
+	for i := 0; i < retry && !cn.brokenOrClosed(); i++ {
+		err = cn.netConn.WriteControl(websocket.PingMessage, []byte{}, cn.deadline(cn.opt.WriteTimeout))
+		if err == nil {
+			return nil
+		}
+		internal.Logger.Debug("ping failed", zapPtr(cn), zap.Error(err))
+		time.Sleep(time.Second)
+	}
+	return err
+}
+
+func (cn *ConnWebSocket) broken() bool {
+	return cn._broken
+}
+
+func (cn *ConnWebSocket) closed() bool {
+	return atomic.LoadUint32(&cn._closed) == 1
+}
+
+func (cn *ConnWebSocket) brokenOrClosed() bool {
+	return cn._broken || cn.closed()
+}
+
+func (cn *ConnWebSocket) availableInProcess() int32 {
+	return int32(math.Max(0, float64(cn.maxInProcess-atomic.LoadInt32(&cn.pendingSize))))
+}
+
+func (cn *ConnWebSocket) readResponse() {
 	var errorTimes = 0
-	defer cn.wait.Done()
 
 	for {
-		if cn.Disposed() {
-			internal.Logger.Info("read worker exit due to disposed")
+		if cn.brokenOrClosed() {
+			internal.Logger.Info("conn read routine exit", zapPtr(cn))
 			return
 		}
 
@@ -337,45 +232,36 @@ func (cn *ConnWebSocket) readWorker() {
 				response, err = graphsonv3.ReadResponse(msg)
 			}
 		}
-
 		// handle response and tick future
-		cn.handleResponse(response)
-
-		// check errors
-		if err == nil {
-			errorTimes = 0
-		} else {
-			errorTimes++
-			if errorTimes > 10 {
-				internal.Logger.Error("read worker exit due to error", zap.Error(err))
-				return
-			}
+		if response != nil {
+			cn.handleResponse(response)
 		}
 
-		select {
-		case <-cn.quit:
-			internal.Logger.Info("Read Done as quit")
-			return
-		default:
-			continue
+		// check errors
+		if err != nil {
+			errorTimes++
+			if errorTimes > 10 {
+				cn._broken = true
+				_ = cn.notifier != nil && cn.notifier()
+				internal.Logger.Error("conn read broken", zapPtr(cn), zap.Error(err))
+				return
+			}
+		} else {
+			errorTimes = 0
 		}
 	}
 }
 
 func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
-	if response == nil {
-		return
-	}
-
 	if response.Code == graphsonv3.RESPONSE_STATUS_AUTHENTICATE {
 		request, _ := graphsonv3.MakeAuthRequest(response.RequestID, cn.opt.Username, cn.opt.Password)
 
-		// block to queue auth request to server
-		cn.inChan <- graphsonv3.NewResponseFuture(request)
+		// append auth request to server and do not care return future
+		cn.SubmitRequestAsync(request)
 		return
 	}
 
-	if future, ok := cn.PendingResponses.Load(response.RequestID); ok {
+	if future, ok := cn.pendingResponses.Load(response.RequestID); ok {
 		responseFuture := future.(*graphsonv3.ResponseFuture)
 
 		responseFuture.FixResponse(func(respChan *graphsonv3.Response) {
@@ -383,7 +269,7 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 			if respChan.Data == nil {
 				respChan.Data = response.Data
 			} else {
-				// make Data as Slice when append
+				// make Data as Slice when json.RawMessage append
 				if data, ok := respChan.Data.(json.RawMessage); ok {
 					dataList := make([]json.RawMessage, 1, 8)
 					dataList[0] = data
@@ -404,15 +290,17 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 
 		if response.Code != graphsonv3.RESPONSE_STATUS_PARITAL_CONTENT {
 			// get a whole response, remove from pending queue then signal to
-			cn.PendingResponses.Delete(response.RequestID)
+			cn.pendingResponses.Delete(response.RequestID)
+			atomic.AddInt32(&cn.pendingSize, -1)
 			responseFuture.Complete(nil)
 
-			if err, ok := response.Data.(error); ok {
-				internal.Logger.Debug("response", zap.Int("code", response.Code), zap.Error(err))
+			if response.Code != graphsonv3.RESPONSE_STATUS_SUCCESS {
+				internal.Logger.Debug("response", zap.Int("code", response.Code),
+					zap.String("error", fmt.Sprint(response.Data)))
 			}
 		}
 	} else {
-		internal.Logger.Error("handle response", zap.String("id", response.RequestID))
+		internal.Logger.Error("handle response not found", zap.String("id", response.RequestID))
 	}
 }
 
@@ -427,17 +315,59 @@ func (cn *ConnWebSocket) deadline(timeout time.Duration) time.Time {
 }
 
 func (cn *ConnWebSocket) SubmitRequestAsync(request *graphsonv3.Request) (*graphsonv3.ResponseFuture, error) {
-	if cn.Disposed() || !cn.Connected() {
-		return nil, errors.New("connect not available")
+	if cn.brokenOrClosed() {
+		internal.Logger.Error("request send close", zapPtr(cn), zap.Error(errConnClosed))
+		return nil, errConnClosed
+	}
+	if atomic.LoadInt32(&cn.pendingSize) >= cn.maxInProcess {
+		internal.Logger.Error("conn", zap.Stringer("cn", cn))
+		internal.Logger.Error("request send over", zapPtr(cn), zap.Error(errOverQueue))
+		return nil, errOverQueue
 	}
 
-	responseFuture := graphsonv3.NewResponseFuture(request)
-	// send request to out channel
-	select {
-	case cn.inChan <- responseFuture:
-		break
-	default:
-		return nil, errors.New("GDB: output queue is full, overhead concurrent")
+	future := graphsonv3.NewResponseFuture(request, cn.returnToPool)
+	// serializer request
+	outBuf, err := graphsonv3.SerializerRequest(request)
+	if err != nil {
+		response := graphsonv3.NewErrorResponse(request.RequestID,
+			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_SERIALIZATION, err)
+		future.Complete(response)
+		internal.Logger.Error("request send serializer", zapPtr(cn), zap.Error(err))
+		return future, nil
 	}
-	return responseFuture, nil
+
+	// check pending or not
+	if _, ok := cn.pendingResponses.LoadOrStore(request.RequestID, future); ok {
+		// rewrite the same 'requestId' with pending requests
+		if request.Op != graph.OPS_AUTHENTICATION {
+			response := graphsonv3.NewErrorResponse(request.RequestID,
+				graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER,
+				errDuplicateId)
+			internal.Logger.Error("request duplicate", zap.String("id ", request.RequestID))
+			future.Complete(response)
+			return future, nil
+		}
+	} else {
+		atomic.AddInt32(&cn.pendingSize, 1)
+	}
+
+	// send request to server
+	cn.wLock.Lock()
+	if err = cn.netConn.SetWriteDeadline(cn.deadline(cn.opt.WriteTimeout)); err == nil {
+		err = cn.netConn.WriteMessage(websocket.BinaryMessage, outBuf)
+	}
+	cn.wLock.Unlock()
+
+	// check network write status and write back notifier to writer
+	if err != nil {
+		response := graphsonv3.NewErrorResponse(request.RequestID,
+			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER, err)
+
+		cn.pendingResponses.Delete(request.RequestID)
+		atomic.AddInt32(&cn.pendingSize, -1)
+
+		future.Complete(response)
+		internal.Logger.Error("request send io", zapPtr(cn), zap.Error(err))
+	}
+	return future, nil
 }

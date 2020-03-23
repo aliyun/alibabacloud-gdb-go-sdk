@@ -8,211 +8,223 @@
 
 /**
  * @author : Liu Jianping
- * @date : 2019/11/29
+ * @date : 2020/3/1
  */
 
 package pool
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestNewConnPool(t *testing.T) {
-	options := &Options{
-		Dialer:          NewConnMock,
-		PingInterval:    2 * time.Second,
-		WriteTimeout:    1 * time.Second,
-		ReadTimeout:     1 * time.Second,
-		OnGoingRequests: 16,
+	server := StartGdbTestServer()
+	defer server.CloseGdbTestServer()
 
-		PoolSize:           10,
-		PoolTimeout:        time.Hour,
-		IdleTimeout:        10 * time.Minute,
-		IdleCheckFrequency: time.Minute,
+	var options = &Options{
+		Dialer:                      NewConnWebSocket,
+		GdbUrl:                      server.WsUrl,
+		PingInterval:                2 * time.Second,
+		WriteTimeout:                1 * time.Second,
+		ReadTimeout:                 1 * time.Second,
+		MaxInProcessPerConn:         4,
+		MaxSimultaneousUsagePerConn: 4,
+
+		PoolSize:           4,
+		PoolTimeout:        2 * time.Second,
+		AliveCheckInterval: 5 * time.Second,
 	}
 
-	Convey("create new ConnPool without idle conn", t, func() {
+	Convey("create and close", t, func() {
+		pool := NewConnPool(options)
+		So(pool, ShouldNotBeNil)
+		So(pool.closed(), ShouldBeFalse)
 
-		Convey("connPool get, put and remove should be ok", func() {
-			var connPool Pooler = NewConnPool(options)
-
-			conn, err := connPool.Get()
-			So(conn, ShouldNotBeNil)
-			So(err, ShouldBeNil)
-
-			// get one connect from pool
-			So(connPool.Len(), ShouldEqual, 1)
-
-			var conns []Conn
-			for i := 0; i < 9; i++ {
-				conn, err := connPool.Get()
-				So(err, ShouldBeNil)
-				conns = append(conns, conn)
+		for {
+			if pool.Size() < options.PoolSize {
+				time.Sleep(time.Millisecond)
+			} else {
+				break
 			}
+		}
+		conn, err := pool.Get()
+		So(err, ShouldBeNil)
+		So(conn.borrowed, ShouldEqual, 1)
 
-			// get all 10 connects from pool
-			So(connPool.Len(), ShouldEqual, 10)
-			So(connPool.IdleLen(), ShouldEqual, 0)
+		So(pool.Size(), ShouldEqual, options.PoolSize)
+		So(pool.dialErrorsNum, ShouldEqual, 0)
 
-			connPool.Remove(conn)
-			// remove 1 connect from pool
-			So(connPool.Len(), ShouldEqual, 9)
-			So(connPool.IdleLen(), ShouldEqual, 0)
+		pool.Close()
+		So(pool.closed(), ShouldBeTrue)
+		So(pool.Size(), ShouldEqual, 0)
 
-			// give back connects to pool, it's idle now
-			for _, conn := range conns {
-				connPool.Put(conn)
-			}
-
-			So(connPool.Len(), ShouldEqual, 9)
-			So(connPool.IdleLen(), ShouldEqual, 9)
-
-			connPool.Close()
-			So(connPool.Len(), ShouldEqual, 0)
-			So(connPool.IdleLen(), ShouldEqual, 0)
-		})
-
-		Convey("should unblock client when conn is removed", func() {
-			defer func() { options.PoolSize = 10 }()
-			options.PoolSize = 1
-
-			var connPool Pooler = NewConnPool(options)
-
-			conn, err := connPool.Get()
-			So(conn, ShouldNotBeNil)
-			So(err, ShouldBeNil)
-
-			started := make(chan bool, 1)
-			done := make(chan bool, 1)
-			go func() {
-				defer func() {
-					if err := recover(); err != nil {
-						done <- true
-						connPool.Put(conn)
-					}
-				}()
-
-				started <- true
-				_, err := connPool.Get()
-				So(err, ShouldBeNil)
-
-				done <- true
-				connPool.Put(conn)
-			}()
-			// wait start
-			<-started
-
-			// get should be blocked
-			select {
-			case <-done:
-				// fail
-				So(1, ShouldEqual, 2)
-			case <-time.After(time.Millisecond):
-				// ok
-			}
-
-			connPool.Remove(conn)
-
-			// here get should be unblocked
-			select {
-			case val := <-done:
-				// ok
-				So(val, ShouldEqual, true)
-			case <-time.After(time.Second):
-				// fail
-				So(1, ShouldEqual, 2)
-			}
-
-			So(connPool.Len(), ShouldEqual, 1)
-			So(connPool.IdleLen(), ShouldEqual, 1)
-
-			connPool.Close()
-		})
+		// connection in pool should be closed
+		So(conn.closed(), ShouldBeTrue)
 	})
 
-	Convey("new connPool with min idle connections", t, func() {
-		defer func() {
-			options.PoolTimeout = time.Hour
-			options.IdleTimeout = 10 * time.Minute
-			options.IdleCheckFrequency = time.Minute
-			options.PoolSize = 10
-			options.MinIdleConns = 0
+	Convey("get and put", t, func() {
+		pool := NewConnPool(options)
+		So(pool, ShouldNotBeNil)
+		So(pool.closed(), ShouldBeFalse)
+
+		conn, err := pool.Get()
+		So(err, ShouldBeNil)
+		So(conn.borrowed, ShouldEqual, 1)
+
+		So(conn.closed(), ShouldBeFalse)
+		pool.Put(conn)
+
+		pool.Close()
+		So(pool.Size(), ShouldEqual, 0)
+	})
+
+	Convey("get and put multi", t, func() {
+		pool := NewConnPool(options)
+		So(pool, ShouldNotBeNil)
+
+		var connList []*ConnWebSocket
+		for i := 0; i < options.PoolSize*options.MaxSimultaneousUsagePerConn; i++ {
+			conn, err := pool.Get()
+			So(err, ShouldBeNil)
+
+			// set borrowed directly in mock
+			atomic.StoreInt32(&conn.pendingSize, int32(options.MaxInProcessPerConn))
+			connList = append(connList, conn)
+		}
+
+		done := make(chan bool, 1)
+		go func() {
+			done <- true
+			pool.Put(connList[0])
 		}()
 
-		options.PoolSize = 16
-		options.PoolTimeout = 100 * time.Second
-		options.IdleTimeout = -1
-		options.IdleCheckFrequency = -1
-		options.MinIdleConns = 1
+		<-done
+		conn, err := pool.Get()
+		So(err, ShouldBeNil)
+		So(conn.borrowed, ShouldEqual, options.MaxSimultaneousUsagePerConn)
 
-		var connPool Pooler = NewConnPool(options)
-		// has idle connections when created
+		pool.Close()
+	})
+}
+
+func TestConnPoolBroken(t *testing.T) {
+	server := StartGdbTestServer()
+	defer server.CloseGdbTestServer()
+
+	var options = &Options{
+		Dialer:                      NewConnWebSocket,
+		GdbUrl:                      server.WsUrl,
+		PingInterval:                200 * time.Millisecond,
+		WriteTimeout:                200 * time.Millisecond,
+		ReadTimeout:                 200 * time.Millisecond,
+		MaxInProcessPerConn:         4,
+		MaxSimultaneousUsagePerConn: 4,
+
+		PoolSize:           4,
+		PoolTimeout:        200 * time.Millisecond,
+		AliveCheckInterval: 1 * time.Second,
+	}
+
+	Convey("get connection and close", t, func() {
+		pool := NewConnPool(options)
+		So(pool, ShouldNotBeNil)
+		So(pool.closed(), ShouldBeFalse)
+
 		for {
-			if connPool.Len() != options.MinIdleConns {
+			if pool.Size() < options.PoolSize {
+				time.Sleep(time.Millisecond)
+			} else {
+				break
+			}
+		}
+		// connection pool is finished
+		So(atomic.LoadInt32(&pool._opening), ShouldEqual, 0)
+
+		conn, err := pool.Get()
+		So(err, ShouldBeNil)
+		So(conn.closed(), ShouldBeFalse)
+
+		// close this conn and return to pool
+		conn.Close()
+		pool.Put(conn)
+
+		// pool remove the broken connection
+		So(pool.Size(), ShouldEqual, options.PoolSize-1)
+
+		// pool is creating new connection for replace
+		for {
+			if pool.Size() < options.PoolSize {
 				time.Sleep(time.Millisecond)
 			} else {
 				break
 			}
 		}
 
-		Convey("idle connections after get, remove", func() {
-			So(connPool.IdleLen(), ShouldEqual, options.MinIdleConns)
-			So(connPool.Len(), ShouldEqual, options.MinIdleConns)
-
-			// idle connections after get
-			cn, err := connPool.Get()
-			So(cn, ShouldNotBeNil)
-			So(err, ShouldBeNil)
-
-			// wait idle create
-			for {
-				if connPool.Len() != options.MinIdleConns+1 {
-					time.Sleep(time.Millisecond)
-				} else {
-					break
-				}
-			}
-			So(connPool.IdleLen(), ShouldEqual, options.MinIdleConns)
-			So(connPool.Len(), ShouldEqual, options.MinIdleConns+1)
-
-			// idle connections after remove
-			connPool.Remove(cn)
-			So(connPool.IdleLen(), ShouldEqual, options.MinIdleConns)
-			So(connPool.Len(), ShouldEqual, options.MinIdleConns)
-		})
-
-		Convey("idle connections not exceed pool size", func() {
-			var conns []Conn
-
-			for i := 0; i < options.PoolSize; i++ {
-				cn, err := connPool.Get()
-				So(cn, ShouldNotBeNil)
-				So(err, ShouldBeNil)
-
-				// get connect from pool
-				if !cn.Pooled() {
-					time.Sleep(5 * time.Millisecond)
-					i--
-				}
-				conns = append(conns, cn)
-			}
-			So(connPool.Len(), ShouldEqual, options.PoolSize)
-			So(connPool.IdleLen(), ShouldEqual, 0)
-
-			// connections include pooled or un-pooled
-			So(len(conns), ShouldBeGreaterThanOrEqualTo, options.PoolSize)
-
-			// put all connections to pool
-			for _, conn := range conns {
-				connPool.Put(conn)
-			}
-			So(connPool.Len(), ShouldEqual, options.PoolSize)
-			So(connPool.IdleLen(), ShouldEqual, options.PoolSize)
-		})
-
-		connPool.Close()
+		So(pool.Size(), ShouldEqual, options.PoolSize)
+		pool.Close()
 	})
 
+	Convey("close connection and wait recover", t, func() {
+		pool := NewConnPool(options)
+		So(pool, ShouldNotBeNil)
+		So(pool.closed(), ShouldBeFalse)
+
+		for {
+			if pool.Size() < options.PoolSize {
+				time.Sleep(time.Millisecond)
+			} else {
+				break
+			}
+		}
+
+		for _, cn := range pool.conns {
+			cn.Close()
+		}
+
+		// fail to get a connection as all broken
+		_, err := pool.Get()
+		So(err.Error(), ShouldEqual, errGetConnTimeout.Error())
+
+		// alive check 1 sec, let pool create connection
+		time.Sleep(1200 * time.Millisecond)
+
+		_, err = pool.Get()
+		So(err, ShouldBeNil)
+		pool.Close()
+	})
+
+	Convey("close connection and tick to recover", t, func() {
+		pool := NewConnPool(options)
+		So(pool, ShouldNotBeNil)
+		So(pool.closed(), ShouldBeFalse)
+
+		for {
+			if pool.Size() < options.PoolSize {
+				time.Sleep(time.Millisecond)
+			} else {
+				break
+			}
+		}
+
+		// all connections broken
+		for _, cn := range pool.conns {
+			cn.Close()
+		}
+
+		// fail to get one
+		_, err := pool.Get()
+		So(err.Error(), ShouldEqual, errGetConnTimeout.Error())
+
+		// tick to recover
+		pool.poolNotifier()
+
+		_, err = pool.Get()
+		So(err, ShouldBeNil)
+
+		pool.Close()
+	})
 }

@@ -14,6 +14,7 @@
 package graphsonv3
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -21,24 +22,28 @@ type ResponseFuture struct {
 	originalRequest *Request
 	response        *Response
 	signalChan      chan struct{}
-	isCompleted     bool
+	isCompleted     uint32
+	_callback       func() bool
 }
 
-func NewResponseFuture(request *Request) *ResponseFuture {
+func NewResponseFuture(request *Request, cb func() bool) *ResponseFuture {
 	return &ResponseFuture{
 		originalRequest: request,
 		signalChan:      make(chan struct{}, 1),
-		isCompleted:     false}
+		isCompleted:     0,
+		_callback:       cb}
 }
 
 func (r *ResponseFuture) Complete(response *Response) {
-	defer close(r.signalChan)
+	if atomic.CompareAndSwapUint32(&r.isCompleted, 0, 1) {
+		defer close(r.signalChan)
 
-	r.isCompleted = true
-	if response != nil {
-		r.response = response
+		if response != nil {
+			r.response = response
+		}
+		_ = r._callback != nil && r._callback()
+		r.signalChan <- struct{}{}
 	}
-	r.signalChan <- struct{}{}
 }
 
 func (r *ResponseFuture) Request() *Request {
@@ -46,7 +51,7 @@ func (r *ResponseFuture) Request() *Request {
 }
 
 func (r *ResponseFuture) IsCompleted() bool {
-	return r.isCompleted
+	return atomic.LoadUint32(&r.isCompleted) == 1
 }
 
 func (r *ResponseFuture) FixResponse(fn func(response *Response)) {
@@ -57,14 +62,14 @@ func (r *ResponseFuture) FixResponse(fn func(response *Response)) {
 }
 
 func (r *ResponseFuture) Get() *Response {
-	if !r.isCompleted {
+	if atomic.LoadUint32(&r.isCompleted) == 0 {
 		<-r.signalChan
 	}
 	return r.response
 }
 
 func (r *ResponseFuture) GetOrTimeout(timeout time.Duration) (*Response, bool) {
-	if r.isCompleted {
+	if atomic.LoadUint32(&r.isCompleted) == 1 {
 		return r.response, false
 	}
 

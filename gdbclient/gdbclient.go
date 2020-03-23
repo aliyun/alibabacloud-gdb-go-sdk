@@ -222,7 +222,6 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	if err != nil {
 		return nil, err
 	}
-	defer c.connPool.Put(conn)
 
 	bindingsStr, _ := json.Marshal(request.Args[graph.ARGS_BINDINGS])
 	// send request to connection, and return future
@@ -230,5 +229,11 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 		zap.String("dsl", request.Args[graph.ARGS_GREMLIN].(string)),
 		zap.String("bindings", string(bindingsStr)),
 		zap.String("processor", request.Processor))
-	return conn.SubmitRequestAsync(request)
+
+	f, err := conn.SubmitRequestAsync(request)
+	if err != nil {
+		// return connection to pool if request is not pending
+		c.connPool.Put(conn)
+	}
+	return f, err
 }

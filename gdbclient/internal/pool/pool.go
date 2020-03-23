@@ -15,282 +15,144 @@ package pool
 
 import (
 	"errors"
+	"fmt"
 	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
 	"go.uber.org/zap"
+	"math"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var ErrClosed = errors.New("gdb: client is closed")
-var ErrPoolTimeout = errors.New("gdb: connection pool timeout")
-
-var timers = sync.Pool{
-	New: func() interface{} {
-		t := time.NewTimer(time.Hour)
-		t.Stop()
-		return t
-	},
-}
-
-// Stats contains pool state information and accumulated stats.
-type Stats struct {
-	Hits     uint32 // number of times free connection was found in the pool
-	Misses   uint32 // number of times free connection was NOT found in the pool
-	Timeouts uint32 // number of times a wait timeout occurred
-
-	TotalConns uint32 // number of total connections in the pool
-	IdleConns  uint32 // number of idle connections in the pool
-	StaleConns uint32 // number of stale connections removed from the pool
-}
-
-type Pooler interface {
-	NewConn() (Conn, error)
-	CloseConn(Conn)
-
-	Get() (Conn, error)
-	Put(Conn)
-	Remove(Conn)
-
-	Len() int
-	IdleLen() int
-	Stats() *Stats
-
-	Close()
-}
+var (
+	errConnClosed     = errors.New("GDB: connection closed")
+	errOverQueue      = errors.New("GDB: request queue is full, overhead concurrent")
+	errDuplicateId    = errors.New("GDB: pending duplicate request id to server")
+	errGetConnTimeout = errors.New("GDB: get connection timeout")
+	errPoolClosed     = errors.New("GDB: connection pool closed")
+)
 
 type Options struct {
-	Dialer   func(*Options) (Conn, error)
-	Endpoint string
+	Dialer   func(*Options) (*ConnWebSocket, error)
+	GdbUrl   string
 	Username string
 	Password string
 
 	PoolSize           int
-	MinIdleConns       int
-	MaxConnAge         time.Duration
 	PoolTimeout        time.Duration
-	IdleTimeout        time.Duration
-	IdleCheckFrequency time.Duration
+	AliveCheckInterval time.Duration
 
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	PingInterval    time.Duration
-	OnGoingRequests int
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	PingInterval time.Duration
+
+	MaxInProcessPerConn         int
+	MaxSimultaneousUsagePerConn int
 }
+
+type pNotifier func() bool
+type pReleaseConn func(socket *ConnWebSocket)
 
 type ConnPool struct {
 	opt *Options
 
-	dialErrorsNum uint32 // atomic
-
+	dialErrorsNum   uint32 // atomic
 	lastDialErrorMu sync.RWMutex
 	lastDialError   error
 
-	queue chan struct{}
-
-	connsMu      sync.Mutex
-	conns        []Conn
-	idleConns    []Conn
-	poolSize     int
-	idleConnsLen int
-
-	stats Stats
+	connsMu                     sync.RWMutex
+	conns                       []*ConnWebSocket
+	poolSize                    int
+	hasAvailableConn            chan struct{}
+	maxSimultaneousUsagePerConn int
 
 	_closed  uint32 // atomic
+	_opening int32  // atomic
 	closedCh chan struct{}
+	checkCh  chan struct{}
 }
 
 func NewConnPool(opt *Options) *ConnPool {
+	if os.Getenv("GO_CLIENT_TEST_URL") != "" {
+		opt.GdbUrl = os.Getenv("GO_CLIENT_TEST_URL")
+		internal.Logger.Info("GDB CLIENT IN TEST MODE")
+	}
+
 	p := &ConnPool{
-		opt: opt,
+		opt:      opt,
+		conns:    make([]*ConnWebSocket, 0, opt.PoolSize),
+		poolSize: opt.PoolSize,
 
-		queue:     make(chan struct{}, opt.PoolSize),
-		conns:     make([]Conn, 0, opt.PoolSize),
-		idleConns: make([]Conn, 0, opt.PoolSize),
-		closedCh:  make(chan struct{}),
+		_closed:          0,
+		_opening:         0,
+		closedCh:         make(chan struct{}),
+		checkCh:          make(chan struct{}),
+		hasAvailableConn: make(chan struct{}),
+
+		maxSimultaneousUsagePerConn: opt.MaxSimultaneousUsagePerConn,
 	}
 
-	p.checkMinIdleConns()
-
-	if p.opt.IdleTimeout > 0 && p.opt.IdleCheckFrequency > 0 {
-		go p.reaper(p.opt.IdleCheckFrequency)
+	p.addConns()
+	if opt.AliveCheckInterval > 0 {
+		go p.checker(p.opt.AliveCheckInterval)
 	}
 
+	internal.Logger.Info("create pool", zap.Int("size", p.poolSize),
+		zap.Duration("get timeout", opt.PoolTimeout), zap.Duration("alive freq", opt.AliveCheckInterval))
 	return p
 }
 
-func (p *ConnPool) NewConn() (Conn, error) {
-	return p.newConn(false)
-}
-
-func (p *ConnPool) CloseConn(cn Conn) {
-	p.removeConnWithLock(cn)
-	p.closeConn(cn)
-}
-
-func (p *ConnPool) Remove(cn Conn) {
-	p.removeConnWithLock(cn)
-	p.freeTurn()
-	p.closeConn(cn)
-}
-
-// Get returns existed connection from the pool or creates a new one.
-func (p *ConnPool) Get() (Conn, error) {
-	if p.closed() {
-		return nil, ErrClosed
-	}
-
-	err := p.waitTurn()
-	if err != nil {
-		internal.Logger.Debug("get connect", zap.Error(err))
-		return nil, err
-	}
-
-	for {
-		p.connsMu.Lock()
-		cn := p.popIdle()
-		p.connsMu.Unlock()
-
-		if cn == nil {
-			break
-		}
-
-		if p.isStaleConn(cn) {
-			p.CloseConn(cn)
-			continue
-		}
-
-		atomic.AddUint32(&p.stats.Hits, 1)
-		return cn, nil
-	}
-
-	atomic.AddUint32(&p.stats.Misses, 1)
-
-	newcn, err := p.newConn(true)
-	if err != nil {
-		p.freeTurn()
-		return nil, err
-	}
-
-	return newcn, nil
-}
-
-func (p *ConnPool) Put(cn Conn) {
-	if !cn.Pooled() {
-		p.Remove(cn)
+func (p *ConnPool) addConns() {
+	if atomic.LoadInt32(&p._opening) > 0 || p.closed() {
+		internal.Logger.Debug("pool is opening or closed")
 		return
 	}
 
-	p.connsMu.Lock()
-	p.idleConns = append(p.idleConns, cn)
-	p.idleConnsLen++
-	p.connsMu.Unlock()
-	p.freeTurn()
-}
-
-// IdleLen returns number of idle connections.
-func (p *ConnPool) IdleLen() int {
-	p.connsMu.Lock()
-	n := p.idleConnsLen
-	p.connsMu.Unlock()
-	return n
-}
-
-// Len returns total number of connections.
-func (p *ConnPool) Len() int {
-	p.connsMu.Lock()
-	n := len(p.conns)
-	p.connsMu.Unlock()
-	return n
-}
-
-func (p *ConnPool) Stats() *Stats {
-	idleLen := p.IdleLen()
-	return &Stats{
-		Hits:     atomic.LoadUint32(&p.stats.Hits),
-		Misses:   atomic.LoadUint32(&p.stats.Misses),
-		Timeouts: atomic.LoadUint32(&p.stats.Timeouts),
-
-		TotalConns: uint32(p.Len()),
-		IdleConns:  uint32(idleLen),
-		StaleConns: atomic.LoadUint32(&p.stats.StaleConns),
-	}
-}
-
-func (p *ConnPool) Close() {
-	if !atomic.CompareAndSwapUint32(&p._closed, 0, 1) {
+	if atomic.LoadUint32(&p.dialErrorsNum) >= uint32(p.poolSize) {
+		internal.Logger.Debug("dial con over number")
 		return
 	}
-	close(p.closedCh)
 
-	p.connsMu.Lock()
-	for _, cn := range p.conns {
-		p.closeConn(cn)
+	internal.Logger.Debug("new conn async", zap.Int("current", p.Size()), zap.Int("target", p.poolSize))
+	for i := p.Size(); i < p.poolSize; i++ {
+		go p.newConn()
 	}
-	p.conns = nil
-	p.poolSize = 0
-	p.idleConns = nil
-	p.idleConnsLen = 0
-	p.connsMu.Unlock()
 }
 
-func (p *ConnPool) checkMinIdleConns() {
-	if p.opt.MinIdleConns == 0 {
+func (p *ConnPool) newConn() {
+	defer atomic.AddInt32(&p._opening, -1)
+	if atomic.AddInt32(&p._opening, 1) > int32(p.poolSize) {
 		return
 	}
-	for p.poolSize < p.opt.PoolSize && p.idleConnsLen < p.opt.MinIdleConns {
-		p.poolSize++
-		p.idleConnsLen++
-		go func() {
-			err := p.addIdleConn()
-			if err != nil {
-				p.connsMu.Lock()
-				p.poolSize--
-				p.idleConnsLen--
-				p.connsMu.Unlock()
-			}
-		}()
-	}
-}
 
-func (p *ConnPool) addIdleConn() error {
-	cn, err := p.dialConn(true)
+	cn, err := p.dialConn()
 	if err != nil {
 		internal.Logger.Error("dialer connect", zap.Error(err))
-		return err
+		return
 	}
 
 	p.connsMu.Lock()
-	p.conns = append(p.conns, cn)
-	p.idleConns = append(p.idleConns, cn)
+	if !p.closed() && len(p.conns) <= p.poolSize {
+		cn.setNotifier(p.poolNotifier)
+		cn.setReleaseConn(p.Put)
+		p.conns = append(p.conns, cn)
+	}
+	cn = nil
 	p.connsMu.Unlock()
-	return nil
+
+	if cn != nil {
+		internal.Logger.Debug("release conn as pool full", zap.Stringer("con", cn))
+		cn.Close()
+	} else {
+		p.announceAvailableConn()
+	}
 }
 
-func (p *ConnPool) newConn(pooled bool) (Conn, error) {
-	cn, err := p.dialConn(pooled)
-	if err != nil {
-		internal.Logger.Error("dialer connect", zap.Error(err))
-		return nil, err
-	}
-
-	p.connsMu.Lock()
-	p.conns = append(p.conns, cn)
-	if pooled {
-		// If pool is full remove the cn on next Put.
-		if p.poolSize >= p.opt.PoolSize {
-			cn.SetPooled(false)
-		} else {
-			p.poolSize++
-		}
-	}
-	p.connsMu.Unlock()
-	return cn, nil
-}
-
-func (p *ConnPool) dialConn(pooled bool) (Conn, error) {
+func (p *ConnPool) dialConn() (*ConnWebSocket, error) {
 	if p.closed() {
-		return nil, ErrClosed
+		return nil, errPoolClosed
 	}
 
 	if atomic.LoadUint32(&p.dialErrorsNum) >= uint32(p.opt.PoolSize) {
@@ -305,73 +167,88 @@ func (p *ConnPool) dialConn(pooled bool) (Conn, error) {
 		}
 		return nil, err
 	}
-
-	cn.SetPooled(pooled)
 	return cn, nil
 }
 
 func (p *ConnPool) tryDial() {
 	for {
 		if p.closed() {
+			internal.Logger.Debug("try routine gone as pool closed")
 			return
 		}
 
 		conn, err := p.opt.Dialer(p.opt)
 		if err != nil {
+			internal.Logger.Info("try dial conn", zap.String("host", p.opt.GdbUrl), zap.Error(err))
 			p.setLastDialError(err)
 			time.Sleep(time.Second)
 			continue
 		}
 
+		internal.Logger.Info("try to dial server success")
 		atomic.StoreUint32(&p.dialErrorsNum, 0)
 		conn.Close()
+
+		// add conn to pool as connection recover
+		p.addConns()
 		return
 	}
 }
 
-func (p *ConnPool) getTurn() {
-	p.queue <- struct{}{}
+func (p *ConnPool) Get() (*ConnWebSocket, error) {
+	if p.closed() {
+		return nil, errPoolClosed
+	}
+	return p.borrowConn(p.opt.PoolTimeout)
 }
 
-func (p *ConnPool) waitTurn() error {
-	select {
-	case p.queue <- struct{}{}:
-		return nil
-	default:
+func (p *ConnPool) Put(cn *ConnWebSocket) {
+	if p.closed() {
+		internal.Logger.Error("put conn", zap.Error(errPoolClosed))
+		return
 	}
-
-	timer := timers.Get().(*time.Timer)
-	timer.Reset(p.opt.PoolTimeout)
-
-	select {
-	case p.queue <- struct{}{}:
-		if !timer.Stop() {
-			<-timer.C
-		}
-		timers.Put(timer)
-		return nil
-	case <-timer.C:
-		timers.Put(timer)
-		atomic.AddUint32(&p.stats.Timeouts, 1)
-		return ErrPoolTimeout
-	}
+	p.returnConn(cn)
 }
 
-func (p *ConnPool) freeTurn() {
-	<-p.queue
+// Size returns total number of connections.
+func (p *ConnPool) Size() int {
+	p.connsMu.RLock()
+	n := len(p.conns)
+	p.connsMu.RUnlock()
+	return n
 }
 
-func (p *ConnPool) popIdle() Conn {
-	if len(p.idleConns) == 0 {
-		return nil
+// close connection pool
+func (p *ConnPool) Close() {
+	if !atomic.CompareAndSwapUint32(&p._closed, 0, 1) {
+		return
 	}
+	internal.Logger.Info("close pool", zap.Int("size", p.Size()))
+	close(p.closedCh)
 
-	idx := len(p.idleConns) - 1
-	cn := p.idleConns[idx]
-	p.idleConns = p.idleConns[:idx]
-	p.idleConnsLen--
-	p.checkMinIdleConns()
-	return cn
+	p.connsMu.Lock()
+	for _, cn := range p.conns {
+		p.closeConn(cn)
+	}
+	p.conns = nil
+	p.connsMu.Unlock()
+}
+
+func (p *ConnPool) String() string {
+	var consStrs []string
+	p.connsMu.RLock()
+	for _, cn := range p.conns {
+		consStrs = append(consStrs, "{"+cn.String()+"}")
+	}
+	connLen := len(p.conns)
+	p.connsMu.RUnlock()
+
+	errorStr := "{}"
+	if atomic.LoadUint32(&p.dialErrorsNum) > 0 {
+		errorStr = fmt.Sprintf("{errNum: %d, errStr: %s}", p.dialErrorsNum, p.getLastDialError().Error())
+	}
+	return fmt.Sprintf("pool<%p> size %d, opening %d, closed %t, errors: %s, conns: [%s]",
+		p, connLen, p._opening, p.closed(), errorStr, strings.Join(consStrs, ","))
 }
 
 func (p *ConnPool) setLastDialError(err error) {
@@ -391,103 +268,193 @@ func (p *ConnPool) closed() bool {
 	return atomic.LoadUint32(&p._closed) == 1
 }
 
-func (p *ConnPool) reaper(frequency time.Duration) {
+func (p *ConnPool) awaitAvailableConn(timeout time.Duration) bool {
+	select {
+	case <-time.After(timeout):
+		return false
+	case <-p.hasAvailableConn:
+		return true
+	}
+}
+
+func (p *ConnPool) announceAvailableConn() {
+	select {
+	case p.hasAvailableConn <- struct{}{}:
+	default:
+	}
+}
+
+func (p *ConnPool) removeConn(cn *ConnWebSocket) {
+	p.connsMu.Lock()
+	for i, c := range p.conns {
+		if c == cn {
+			p.conns = append(p.conns[:i], p.conns[i+1:]...)
+			break
+		}
+	}
+	p.connsMu.Unlock()
+}
+
+func (p *ConnPool) returnConn(conn *ConnWebSocket) {
+	atomic.AddInt32(&conn.borrowed, -1)
+
+	internal.Logger.Debug("return conn", zapPtr(conn))
+	if conn.brokenOrClosed() {
+		internal.Logger.Debug("return broken conn", zap.Stringer("cn", conn))
+		p.removeConn(conn)
+		conn.Close()
+
+		// active to dial a new connection to replace this conn
+		p.addConns()
+	} else {
+		p.announceAvailableConn()
+	}
+}
+
+func (p *ConnPool) borrowConn(timeout time.Duration) (*ConnWebSocket, error) {
+	conn := p.selectLeastUsed()
+	if conn == nil {
+		internal.Logger.Debug("borrow conn nil", zap.Int("poolSize", p.Size()))
+		return p.waitForConn(timeout)
+	}
+
+	for {
+		inFlight := atomic.LoadInt32(&conn.borrowed)
+		available := conn.availableInProcess()
+		if inFlight >= int32(p.maxSimultaneousUsagePerConn) && available == 0 {
+			internal.Logger.Debug("wait conn", zapPtr(conn),
+				zap.Int32("flight", conn.borrowed), zap.Int32("availableInProcess", available))
+			return p.waitForConn(timeout)
+		}
+		if atomic.CompareAndSwapInt32(&conn.borrowed, inFlight, inFlight+1) {
+			internal.Logger.Debug("borrowed conn", zapPtr(conn),
+				zap.Int32("flight", conn.borrowed), zap.Int32("availableInProcess", available))
+			return conn, nil
+		}
+	}
+}
+
+func (p *ConnPool) waitForConn(timeout time.Duration) (*ConnWebSocket, error) {
+	endtime := time.Now().Add(timeout)
+
+	for remaining := timeout; remaining > 0; remaining = endtime.Sub(time.Now()) {
+		internal.Logger.Debug("wait conn", zap.Time("now", time.Now()), zap.Duration("timeout", remaining))
+		ok := p.awaitAvailableConn(remaining)
+		if !ok {
+			internal.Logger.Debug("wait conn timeout")
+			return nil, errGetConnTimeout
+		}
+		if p.closed() {
+			internal.Logger.Debug("wait conn failed as pool closed")
+			return nil, errPoolClosed
+		}
+
+		conn := p.selectLeastUsed()
+		for conn != nil {
+			inFlight := atomic.LoadInt32(&conn.borrowed)
+			available := conn.availableInProcess()
+			// FIXME: connection available
+			// break to wait again if inFlight >= available in Java SDK
+			// why do set to wait again if connection available, so typo it now
+			if available == 0 {
+				internal.Logger.Info("wait conn may timeout", zapPtr(conn),
+					zap.Int32("inFlight", inFlight), zap.Int32("availableInProcess", available))
+				break
+			}
+			if atomic.CompareAndSwapInt32(&conn.borrowed, inFlight, inFlight+1) {
+				return conn, nil
+			}
+		}
+	}
+
+	return nil, errGetConnTimeout
+}
+
+func (p *ConnPool) selectLeastUsed() *ConnWebSocket {
+	minInFlight := int32(math.MaxInt32)
+	var leastBusy *ConnWebSocket
+	p.connsMu.RLock()
+	for _, cn := range p.conns {
+		inFlight := atomic.LoadInt32(&cn.borrowed)
+		if !cn.brokenOrClosed() && inFlight < minInFlight {
+			minInFlight = inFlight
+			leastBusy = cn
+		}
+	}
+	p.connsMu.RUnlock()
+	return leastBusy
+}
+
+func (p *ConnPool) checker(frequency time.Duration) {
 	ticker := time.NewTicker(frequency)
 	defer ticker.Stop()
+	var mFreq uint64 = 0
 
 	for {
 		select {
 		case <-ticker.C:
-			// It is possible that ticker and closedCh arrive together,
-			// and select pseudo-randomly pick ticker case, we double
-			// check here to prevent being executed after closed.
-			if p.closed() {
-				return
+			p.doCheck()
+			// print pool status to info log
+			if mFreq%5 == 0 {
+				internal.Logger.Info("status", zap.Stringer("pool", p))
 			}
-			_, err := p.ReapStaleConns()
-			if err != nil {
-				internal.Logger.Debug("ReapStaleConns", zap.Error(err))
-				continue
-			}
+			mFreq++
+		case <-p.checkCh:
+			p.doCheck()
 		case <-p.closedCh:
 			return
 		}
 	}
 }
 
-func (p *ConnPool) ReapStaleConns() (int, error) {
-	var n int
-	for {
-		p.getTurn()
-
-		p.connsMu.Lock()
-		cn := p.reapStaleConn()
-		p.connsMu.Unlock()
-		p.freeTurn()
-
-		if cn != nil {
-			p.closeConn(cn)
-			n++
-		} else {
-			break
-		}
-	}
-	atomic.AddUint32(&p.stats.StaleConns, uint32(n))
-	return n, nil
-}
-
-func (p *ConnPool) reapStaleConn() Conn {
-	if len(p.idleConns) == 0 {
-		return nil
-	}
-
-	cn := p.idleConns[0]
-	if !p.isStaleConn(cn) {
-		return nil
-	}
-
-	p.idleConns = append(p.idleConns[:0], p.idleConns[1:]...)
-	p.idleConnsLen--
-	p.removeConn(cn)
-
-	return cn
-}
-
-func (p *ConnPool) isStaleConn(cn Conn) bool {
-	if p.opt.IdleTimeout == 0 && p.opt.MaxConnAge == 0 {
+func (p *ConnPool) poolNotifier() bool {
+	if p.closed() {
 		return false
 	}
 
-	now := time.Now()
-	if p.opt.IdleTimeout > 0 && now.Sub(cn.UsedAt()) >= p.opt.IdleTimeout {
+	select {
+	case p.checkCh <- struct{}{}:
 		return true
+	default:
+		return false
 	}
-	if p.opt.MaxConnAge > 0 && now.Sub(cn.CreatedAt()) >= p.opt.MaxConnAge {
-		return true
-	}
-
-	return false
 }
 
-func (p *ConnPool) removeConn(cn Conn) {
-	for i, c := range p.conns {
-		if c == cn {
+func (p *ConnPool) doCheck() {
+	// It is possible that ticker and closedCh arrive together,
+	// and select pseudo-randomly pick ticker case, we double
+	// check here to prevent being executed after closed.
+	if p.closed() {
+		return
+	}
+	count := p.reapStaleConns()
+	if count > 0 {
+		internal.Logger.Debug("reaper stale conns", zap.Int("count", count))
+		p.addConns()
+	}
+}
+
+func (p *ConnPool) reapStaleConns() int {
+	brokenConns := make([]*ConnWebSocket, 0)
+
+	p.connsMu.Lock()
+restart:
+	for i, cn := range p.conns {
+		if cn.brokenOrClosed() {
+			brokenConns = append(brokenConns, cn)
 			p.conns = append(p.conns[:i], p.conns[i+1:]...)
-			if cn.Pooled() {
-				p.poolSize--
-				p.checkMinIdleConns()
-			}
-			return
+			goto restart
 		}
 	}
-}
-
-func (p *ConnPool) closeConn(cn Conn) {
-	cn.Close()
-}
-
-func (p *ConnPool) removeConnWithLock(cn Conn) {
-	p.connsMu.Lock()
-	p.removeConn(cn)
 	p.connsMu.Unlock()
+
+	for _, cn := range brokenConns {
+		internal.Logger.Debug("reap broken conn", zap.Stringer("str", cn))
+		p.closeConn(cn)
+	}
+	return len(brokenConns)
+}
+
+func (p *ConnPool) closeConn(cn *ConnWebSocket) {
+	cn.Close()
 }
