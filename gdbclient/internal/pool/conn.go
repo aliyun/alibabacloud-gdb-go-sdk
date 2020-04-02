@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 	"math"
 	"net/http"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -269,22 +270,28 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 			if respChan.Data == nil {
 				respChan.Data = response.Data
 			} else {
-				// make Data as Slice when json.RawMessage append
-				if data, ok := respChan.Data.(json.RawMessage); ok {
-					dataList := make([]json.RawMessage, 1, 8)
-					dataList[0] = data
-					respChan.Data = dataList
-				}
-
 				if newData, ok := response.Data.(json.RawMessage); ok {
-					if dataList, ok := respChan.Data.([]json.RawMessage); ok {
+					// make Data as Slice when json.RawMessage append
+					if data, ok := respChan.Data.(json.RawMessage); ok {
+						dataList := make([]json.RawMessage, 2, 8)
+						dataList[0] = data
+						dataList[1] = newData
+						respChan.Data = dataList
+					} else if dataList, ok := respChan.Data.([]json.RawMessage); ok {
 						respChan.Data = append(dataList, newData)
+					} else {
+						// FIXME: incoming rawMessage but couldn't append to
+						internal.Logger.Error("incoming rawMessage after", zap.Stringer("data", reflect.TypeOf(respChan.Data)))
 					}
+				} else if newData, ok := response.Data.(error); ok {
+					// FIXME: incoming a error, ignore it if here is before, take it if not
+					if _, isErr := respChan.Data.(error); !isErr {
+						respChan.Data = newData
+					}
+					internal.Logger.Debug("incoming error after", zap.Stringer("data", reflect.TypeOf(respChan.Data)))
+				} else {
+					internal.Logger.Error("ignore incoming message", zap.Stringer("data", reflect.TypeOf(response.Data)))
 				}
-			}
-
-			if err, ok := response.Data.(error); ok {
-				internal.Logger.Debug("response error", zap.String("id", respChan.RequestID), zap.Error(err))
 			}
 		})
 
