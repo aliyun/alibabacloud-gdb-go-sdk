@@ -274,10 +274,6 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 					dataList := make([]json.RawMessage, 1, 8)
 					dataList[0] = data
 					respChan.Data = dataList
-				} else {
-					internal.Logger.Error("append response",
-						zap.String("old", fmt.Sprint(respChan.Data)),
-						zap.String("append", fmt.Sprint(response.Data)))
 				}
 
 				if newData, ok := response.Data.(json.RawMessage); ok {
@@ -285,6 +281,10 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 						respChan.Data = append(dataList, newData)
 					}
 				}
+			}
+
+			if err, ok := response.Data.(error); ok {
+				internal.Logger.Debug("response error", zap.String("id", respChan.RequestID), zap.Error(err))
 			}
 		})
 
