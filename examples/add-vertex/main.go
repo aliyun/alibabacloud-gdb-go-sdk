@@ -45,6 +45,9 @@ func main() {
 		Password: password,
 	}
 
+	// disable the follow comment line to mute logger output
+	// goClient.SetLogger(zap.NewNop())
+
 	// connect GDB with auth
 	client := goClient.NewClient(settings)
 
