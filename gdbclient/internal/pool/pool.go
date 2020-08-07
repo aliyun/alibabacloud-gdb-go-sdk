@@ -138,8 +138,8 @@ func (p *ConnPool) newConn() {
 		cn.setNotifier(p.poolNotifier)
 		cn.setReleaseConn(p.Put)
 		p.conns = append(p.conns, cn)
+		cn = nil
 	}
-	cn = nil
 	p.connsMu.Unlock()
 
 	if cn != nil {
