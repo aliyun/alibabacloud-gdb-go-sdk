@@ -75,7 +75,7 @@ func NewClient(settings *Settings) Client {
 	settings.init()
 	client := &baseClient{setting: settings, session: false}
 	client.connPool = pool.NewConnPool(settings.getOpts())
-	internal.Logger.Info("new client", zap.String("server", client.String()), zap.Bool("session", client.session))
+	internal.Logger.Info("new client", zap.String("server", client.String()), zap.Bool("session", client.session), zap.Time("createTime", time.Now()))
 	return client
 }
 
@@ -83,7 +83,7 @@ func NewSessionClient(sessionId string, settings *Settings) SessionClient {
 	settings.init()
 	client := &baseClient{setting: settings, session: true, sessionId: sessionId}
 	client.connPool = pool.NewConnPool(settings.getSessionOpts())
-	internal.Logger.Info("new client", zap.String("server", client.String()), zap.Bool("session", client.session))
+	internal.Logger.Info("new client", zap.String("server", client.String()), zap.Bool("session", client.session), zap.Time("createTime", time.Now()))
 	return client
 }
 
@@ -96,7 +96,7 @@ func (c *baseClient) Close() {
 		c.closeSession()
 	}
 	c.connPool.Close()
-	internal.Logger.Info("close client", zap.Bool("session", c.session))
+	internal.Logger.Info("close client", zap.Bool("session", c.session), zap.Time("time", time.Now()))
 }
 
 func (c *baseClient) getEndpoint() string {
@@ -170,7 +170,7 @@ func (c *baseClient) BatchSubmit(batchSubmit func(ClientShell) error) error {
 	if err != nil {
 		err = c.transaction(_ROLLBACK)
 		if err != nil {
-			internal.Logger.Error("unstable transaction status as rollback failed", zap.Error(err))
+			internal.Logger.Error("unstable transaction status as rollback failed", zap.Error(err), zap.Time("time", time.Now()))
 		}
 	}
 	return err
@@ -180,16 +180,16 @@ func (c *baseClient) closeSession() {
 	request := graphsonv3.MakeRequestCloseSession(c.sessionId)
 	respFuture, err := c.requestAsync(request)
 	if err != nil {
-		internal.Logger.Warn("fail to close session", zap.Error(err))
+		internal.Logger.Warn("fail to close session", zap.Error(err), zap.Time("time", time.Now()))
 		return
 	}
 
 	// NOTICE: wait to get response of session close request
 	if resp, timeout := respFuture.GetOrTimeout(2 * time.Second); timeout {
-		internal.Logger.Warn("response timeout for close session")
+		internal.Logger.Warn("response timeout for close session", zap.Time("time", time.Now()))
 	} else {
 		if resp.Code != graphsonv3.RESPONSE_STATUS_NO_CONTENT && resp.Code != graphsonv3.RESPONSE_STATUS_SUCCESS {
-			internal.Logger.Warn("response error for close session", zap.Error(resp.Data.(error)))
+			internal.Logger.Warn("response error for close session", zap.Error(resp.Data.(error)), zap.Time("time", time.Now()))
 		}
 	}
 }
@@ -220,12 +220,16 @@ func (c *baseClient) transaction(ops string) error {
 func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.ResponseFuture, error) {
 	conn, err := c.connPool.Get()
 	if err != nil {
+		internal.Logger.Info("request connect failed",
+			zap.Time("time", time.Now()),
+			zap.Error(err))
 		return nil, err
 	}
 
 	bindingsStr, _ := json.Marshal(request.Args[graph.ARGS_BINDINGS])
 	// send request to connection, and return future
 	internal.Logger.Info("submit script",
+		zap.Time("time", time.Now()),
 		zap.String("dsl", request.Args[graph.ARGS_GREMLIN].(string)),
 		zap.String("bindings", string(bindingsStr)),
 		zap.String("processor", request.Processor))
@@ -234,6 +238,10 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	if err != nil {
 		// return connection to pool if request is not pending
 		c.connPool.Put(conn)
+		internal.Logger.Info("submit script failed",
+			zap.Time("time", time.Now()),
+			zap.Error(err),
+			zap.String("dsl", request.Args[graph.ARGS_GREMLIN].(string)))
 	}
 	return f, err
 }

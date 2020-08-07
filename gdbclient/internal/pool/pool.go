@@ -115,7 +115,7 @@ func (p *ConnPool) addConns() {
 		return
 	}
 
-	internal.Logger.Debug("new conn async", zap.Int("current", p.Size()), zap.Int("target", p.poolSize))
+	internal.Logger.Debug("new conn async", zap.Time("time", time.Now()), zap.Int("current", p.Size()), zap.Int("target", p.poolSize))
 	for i := p.Size(); i < p.poolSize; i++ {
 		go p.newConn()
 	}
@@ -129,7 +129,7 @@ func (p *ConnPool) newConn() {
 
 	cn, err := p.dialConn()
 	if err != nil {
-		internal.Logger.Error("dialer connect", zap.Error(err))
+		internal.Logger.Error("dialer connect", zap.Time("time", time.Now()), zap.Error(err))
 		return
 	}
 
@@ -143,7 +143,7 @@ func (p *ConnPool) newConn() {
 	p.connsMu.Unlock()
 
 	if cn != nil {
-		internal.Logger.Debug("release conn as pool full", zap.Stringer("con", cn))
+		internal.Logger.Debug("release conn as pool full", zap.Time("time", time.Now()), zap.Stringer("con", cn))
 		cn.Close()
 	} else {
 		p.announceAvailableConn()
@@ -185,7 +185,7 @@ func (p *ConnPool) tryDial() {
 			continue
 		}
 
-		internal.Logger.Info("try to dial server success")
+		internal.Logger.Info("try to dial server success", zap.Time("time", time.Now()))
 		atomic.StoreUint32(&p.dialErrorsNum, 0)
 		conn.Close()
 
@@ -300,7 +300,7 @@ func (p *ConnPool) returnConn(conn *ConnWebSocket) {
 
 	internal.Logger.Debug("return conn", zapPtr(conn))
 	if conn.brokenOrClosed() {
-		internal.Logger.Debug("return broken conn", zap.Stringer("cn", conn))
+		internal.Logger.Debug("return broken conn", zap.Time("time", time.Now()), zap.Stringer("cn", conn))
 		p.removeConn(conn)
 		conn.Close()
 
@@ -341,7 +341,7 @@ func (p *ConnPool) waitForConn(timeout time.Duration) (*ConnWebSocket, error) {
 		internal.Logger.Debug("wait conn", zap.Time("now", time.Now()), zap.Duration("timeout", remaining))
 		ok := p.awaitAvailableConn(remaining)
 		if !ok {
-			internal.Logger.Debug("wait conn timeout")
+			internal.Logger.Debug("wait conn timeout", zap.Time("time", time.Now()))
 			return nil, errGetConnTimeout
 		}
 		if p.closed() {
@@ -396,7 +396,7 @@ func (p *ConnPool) checker(frequency time.Duration) {
 			p.doCheck()
 			// print pool status to info log
 			if mFreq%5 == 0 {
-				internal.Logger.Info("status", zap.Stringer("pool", p))
+				internal.Logger.Info("status", zap.Time("time", time.Now()), zap.Stringer("pool", p))
 			}
 			mFreq++
 		case <-p.checkCh:
@@ -429,7 +429,7 @@ func (p *ConnPool) doCheck() {
 	}
 	count := p.reapStaleConns()
 	if count > 0 {
-		internal.Logger.Debug("reaper stale conns", zap.Int("count", count))
+		internal.Logger.Debug("reaper stale conns", zap.Time("time", time.Now()), zap.Int("count", count))
 		p.addConns()
 	}
 }
@@ -449,7 +449,7 @@ restart:
 	p.connsMu.Unlock()
 
 	for _, cn := range brokenConns {
-		internal.Logger.Debug("reap broken conn", zap.Stringer("str", cn))
+		internal.Logger.Debug("reap broken conn", zap.Time("time", time.Now()), zap.Stringer("str", cn))
 		p.closeConn(cn)
 	}
 	return len(brokenConns)

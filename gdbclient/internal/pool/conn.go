@@ -88,14 +88,14 @@ func NewConnWebSocket(opt *Options) (*ConnWebSocket, error) {
 	go cn.readResponse()
 
 	internal.Logger.Info("create connect", zap.String("url", opt.GdbUrl),
-		zap.Int("concurrent", opt.MaxInProcessPerConn), zapPtr(cn))
+		zap.Int("concurrent", opt.MaxInProcessPerConn), zapPtr(cn), zap.Duration("pingInterval", opt.PingInterval))
 	return cn, nil
 }
 
 func (cn *ConnWebSocket) String() string {
-	return fmt.Sprintf("conn<%p>: createAt %s, usedAt %s, borrowed %d, pending %d,"+
+	return fmt.Sprintf("conn<%d>: createAt %s, usedAt %s, borrowed %d, pending %d,"+
 		" broken %t, closed %t, pingErrorNum %d",
-		cn, cn.createdAt.Format("2006-01-02_3:04:05.000"),
+		uintptr(unsafe.Pointer(cn)), cn.createdAt.Format("2006-01-02_3:04:05.000"),
 		cn.UsedAt().Format("2006-01-02_3:04:05.000"),
 		atomic.LoadInt32(&cn.borrowed), atomic.LoadInt32(&cn.pendingSize),
 		cn._broken, cn.closed(), cn.pingErrorsNum)
@@ -168,12 +168,12 @@ func (cn *ConnWebSocket) connCheck(frequency time.Duration) {
 			err := cn.doping(3)
 			if err != nil {
 				cn.pingErrorsNum += 1
-				internal.Logger.Error("status check", zapPtr(cn), zap.Error(err))
+				internal.Logger.Error("status check", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 				if cn.pingErrorsNum >= 3 {
 					cn._broken = true
 					// wakeup pool to check connection status
 					_ = cn.notifier != nil && cn.notifier()
-					internal.Logger.Error("conn ping broken", zapPtr(cn))
+					internal.Logger.Error("conn ping broken", zapPtr(cn), zap.Time("time", time.Now()))
 					return
 				}
 			} else {
@@ -192,7 +192,7 @@ func (cn *ConnWebSocket) doping(retry int) error {
 		if err == nil {
 			return nil
 		}
-		internal.Logger.Debug("ping failed", zapPtr(cn), zap.Error(err))
+		internal.Logger.Debug("ping failed", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 		time.Sleep(time.Second)
 	}
 	return err
@@ -219,7 +219,7 @@ func (cn *ConnWebSocket) readResponse() {
 
 	for {
 		if cn.brokenOrClosed() {
-			internal.Logger.Info("conn read routine exit", zapPtr(cn))
+			internal.Logger.Info("conn read routine exit", zapPtr(cn), zap.Time("time", time.Now()))
 			return
 		}
 
@@ -244,7 +244,7 @@ func (cn *ConnWebSocket) readResponse() {
 			if errorTimes > 10 {
 				cn._broken = true
 				_ = cn.notifier != nil && cn.notifier()
-				internal.Logger.Error("conn read broken", zapPtr(cn), zap.Error(err))
+				internal.Logger.Error("conn read broken", zapPtr(cn),zap.Time("time", time.Now()), zap.Error(err))
 				return
 			}
 		} else {
@@ -281,16 +281,16 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 						respChan.Data = append(dataList, newData)
 					} else {
 						// FIXME: incoming rawMessage but couldn't append to
-						internal.Logger.Error("incoming rawMessage after", zap.Stringer("data", reflect.TypeOf(respChan.Data)))
+						internal.Logger.Error("incoming rawMessage after", zap.Time("time", time.Now()), zap.Stringer("data", reflect.TypeOf(respChan.Data)))
 					}
 				} else if newData, ok := response.Data.(error); ok {
 					// FIXME: incoming a error, ignore it if here is before, take it if not
 					if _, isErr := respChan.Data.(error); !isErr {
 						respChan.Data = newData
 					}
-					internal.Logger.Debug("incoming error after", zap.Stringer("data", reflect.TypeOf(respChan.Data)))
+					internal.Logger.Debug("incoming error after", zap.Time("time", time.Now()), zap.Stringer("data", reflect.TypeOf(respChan.Data)))
 				} else {
-					internal.Logger.Error("ignore incoming message", zap.Stringer("data", reflect.TypeOf(response.Data)))
+					internal.Logger.Error("ignore incoming message", zap.Time("time", time.Now()), zap.Stringer("data", reflect.TypeOf(response.Data)))
 				}
 			}
 		})
@@ -301,13 +301,13 @@ func (cn *ConnWebSocket) handleResponse(response *graphsonv3.Response) {
 			atomic.AddInt32(&cn.pendingSize, -1)
 			responseFuture.Complete(nil)
 
-			if response.Code != graphsonv3.RESPONSE_STATUS_SUCCESS {
-				internal.Logger.Debug("response", zap.Int("code", response.Code),
+			if (response.Code != graphsonv3.RESPONSE_STATUS_SUCCESS) && (response.Code != graphsonv3.RESPONSE_STATUS_NO_CONTENT) {
+				internal.Logger.Debug("response", zap.Time("time", time.Now()), zap.Int("code", response.Code),
 					zap.String("error", fmt.Sprint(response.Data)))
 			}
 		}
 	} else {
-		internal.Logger.Error("handle response not found", zap.String("id", response.RequestID))
+		internal.Logger.Error("handle response not found", zap.Time("time", time.Now()), zap.String("id", response.RequestID))
 	}
 }
 
@@ -323,12 +323,12 @@ func (cn *ConnWebSocket) deadline(timeout time.Duration) time.Time {
 
 func (cn *ConnWebSocket) SubmitRequestAsync(request *graphsonv3.Request) (*graphsonv3.ResponseFuture, error) {
 	if cn.brokenOrClosed() {
-		internal.Logger.Error("request send close", zapPtr(cn), zap.Error(errConnClosed))
+		internal.Logger.Error("request send close", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(errConnClosed))
 		return nil, errConnClosed
 	}
 	if atomic.LoadInt32(&cn.pendingSize) >= cn.maxInProcess {
 		internal.Logger.Error("conn", zap.Stringer("cn", cn))
-		internal.Logger.Error("request send over", zapPtr(cn), zap.Error(errOverQueue))
+		internal.Logger.Error("request send over", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(errOverQueue))
 		return nil, errOverQueue
 	}
 
@@ -339,7 +339,7 @@ func (cn *ConnWebSocket) SubmitRequestAsync(request *graphsonv3.Request) (*graph
 		response := graphsonv3.NewErrorResponse(request.RequestID,
 			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_SERIALIZATION, err)
 		future.Complete(response)
-		internal.Logger.Error("request send serializer", zapPtr(cn), zap.Error(err))
+		internal.Logger.Error("request send serializer", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 		return future, nil
 	}
 
@@ -350,7 +350,7 @@ func (cn *ConnWebSocket) SubmitRequestAsync(request *graphsonv3.Request) (*graph
 			response := graphsonv3.NewErrorResponse(request.RequestID,
 				graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER,
 				errDuplicateId)
-			internal.Logger.Error("request duplicate", zap.String("id ", request.RequestID))
+			internal.Logger.Error("request duplicate", zap.Time("time", time.Now()), zap.String("id ", request.RequestID))
 			future.Complete(response)
 			return future, nil
 		}
@@ -374,7 +374,7 @@ func (cn *ConnWebSocket) SubmitRequestAsync(request *graphsonv3.Request) (*graph
 		atomic.AddInt32(&cn.pendingSize, -1)
 
 		future.Complete(response)
-		internal.Logger.Error("request send io", zapPtr(cn), zap.Error(err))
+		internal.Logger.Error("request send io", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 	}
 	return future, nil
 }
