@@ -55,6 +55,7 @@ type ConnWebSocket struct {
 	closeCn chan struct{}
 
 	pingErrorsNum int
+	lastIoError   error
 	wLock         sync.Mutex
 }
 
@@ -76,6 +77,7 @@ func NewConnWebSocket(opt *Options) (*ConnWebSocket, error) {
 		createdAt:        time.Now(),
 		closeCn:          make(chan struct{}),
 		pendingResponses: &sync.Map{},
+		lastIoError:      errConnClosed,
 		maxInProcess:     int32(opt.MaxInProcessPerConn),
 	}
 
@@ -115,7 +117,7 @@ func (cn *ConnWebSocket) Close() {
 	// fill complete all pending response future
 	cn.pendingResponses.Range(func(key, value interface{}) bool {
 		response := graphsonv3.NewErrorResponse(key.(string),
-			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER, errConnClosed)
+			graphsonv3.RESPONSE_STATUS_REQUEST_ERROR_DELIVER, cn.lastIoError)
 		value.(*graphsonv3.ResponseFuture).Complete(response)
 		return true
 	})
@@ -171,6 +173,7 @@ func (cn *ConnWebSocket) connCheck(frequency time.Duration) {
 				internal.Logger.Error("status check", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 				if cn.pingErrorsNum >= 3 {
 					cn._broken = true
+					cn.lastIoError = err
 					// wakeup pool to check connection status
 					_ = cn.notifier != nil && cn.notifier()
 					internal.Logger.Error("conn ping broken", zapPtr(cn), zap.Time("time", time.Now()))
@@ -243,6 +246,7 @@ func (cn *ConnWebSocket) readResponse() {
 			errorTimes++
 			if errorTimes > 10 {
 				cn._broken = true
+				cn.lastIoError = err
 				_ = cn.notifier != nil && cn.notifier()
 				internal.Logger.Error("conn read broken", zapPtr(cn),zap.Time("time", time.Now()), zap.Error(err))
 				return

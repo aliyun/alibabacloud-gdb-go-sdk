@@ -100,6 +100,7 @@ func (s *Settings) getOpts() *pool.Options {
 		PingInterval: s.PingInterval,
 		WriteTimeout: s.WriteTimeout,
 		ReadTimeout:  s.ReadTimeout,
+		MaxConnAge:   s.MaxConnAge,
 
 		PoolSize:                    s.PoolSize,
 		PoolTimeout:                 s.PoolTimeout,
@@ -119,6 +120,7 @@ func (s *Settings) getSessionOpts() *pool.Options {
 		PingInterval: s.PingInterval,
 		WriteTimeout: s.WriteTimeout,
 		ReadTimeout:  s.ReadTimeout,
+		MaxConnAge:   s.MaxConnAge,
 
 		PoolSize:                    1,
 		PoolTimeout:                 s.PoolTimeout,

@@ -43,6 +43,7 @@ type Options struct {
 	PoolSize           int
 	PoolTimeout        time.Duration
 	AliveCheckInterval time.Duration
+	MaxConnAge         time.Duration
 
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
@@ -100,7 +101,8 @@ func NewConnPool(opt *Options) *ConnPool {
 	}
 
 	internal.Logger.Info("create pool", zap.Int("size", p.poolSize),
-		zap.Duration("get timeout", opt.PoolTimeout), zap.Duration("alive freq", opt.AliveCheckInterval))
+		zap.Duration("get timeout", opt.PoolTimeout), zap.Duration("alive freq", opt.AliveCheckInterval),
+		zap.Duration("conn max age", opt.MaxConnAge))
 	return p
 }
 
@@ -137,7 +139,7 @@ func (p *ConnPool) newConn() {
 	if !p.closed() && len(p.conns) <= p.poolSize {
 		cn.setNotifier(p.poolNotifier)
 		cn.setReleaseConn(p.Put)
-		p.conns = append(p.conns, cn)
+		p.conns = append([]*ConnWebSocket{cn}, p.conns...)
 		cn = nil
 	}
 	p.connsMu.Unlock()
@@ -440,7 +442,7 @@ func (p *ConnPool) reapStaleConns() int {
 	p.connsMu.Lock()
 restart:
 	for i, cn := range p.conns {
-		if cn.brokenOrClosed() {
+		if p.isStaleConns(cn) {
 			brokenConns = append(brokenConns, cn)
 			p.conns = append(p.conns[:i], p.conns[i+1:]...)
 			goto restart
@@ -449,10 +451,33 @@ restart:
 	p.connsMu.Unlock()
 
 	for _, cn := range brokenConns {
-		internal.Logger.Debug("reap broken conn", zap.Time("time", time.Now()), zap.Stringer("str", cn))
+		internal.Logger.Debug("reap stale conn", zap.Time("time", time.Now()), zap.Stringer("str", cn))
 		p.closeConn(cn)
 	}
 	return len(brokenConns)
+}
+
+func (p *ConnPool) isStaleConns(cn *ConnWebSocket) bool {
+	if cn.brokenOrClosed() {
+		return true
+	}
+
+	// check max age bellow
+	if p.opt.MaxConnAge == 0 {
+		return false
+	}
+
+	// connection in use ??
+	if (atomic.LoadInt32(&cn.borrowed) != 0) || (atomic.LoadInt32(&cn.pendingSize) != 0) {
+		return false
+	}
+
+	// age old enough to release
+	if time.Now().Sub(cn.CreatedAt()) > p.opt.MaxConnAge {
+		return true
+	}
+
+	return false
 }
 
 func (p *ConnPool) closeConn(cn *ConnWebSocket) {
