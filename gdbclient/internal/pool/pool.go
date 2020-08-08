@@ -298,7 +298,7 @@ func (p *ConnPool) removeConn(cn *ConnWebSocket) {
 func (p *ConnPool) returnConn(conn *ConnWebSocket) {
 	atomic.AddInt32(&conn.borrowed, -1)
 
-	internal.Logger.Debug("return conn", zapPtr(conn))
+	internal.Logger.Debug("return conn", zapPtr(conn), zap.Time("time", time.Now()))
 	if conn.brokenOrClosed() {
 		internal.Logger.Debug("return broken conn", zap.Time("time", time.Now()), zap.Stringer("cn", conn))
 		p.removeConn(conn)
@@ -327,7 +327,7 @@ func (p *ConnPool) borrowConn(timeout time.Duration) (*ConnWebSocket, error) {
 			return p.waitForConn(timeout)
 		}
 		if atomic.CompareAndSwapInt32(&conn.borrowed, inFlight, inFlight+1) {
-			internal.Logger.Debug("borrowed conn", zapPtr(conn),
+			internal.Logger.Debug("borrowed conn", zapPtr(conn), zap.Time("time", time.Now()),
 				zap.Int32("flight", conn.borrowed), zap.Int32("availableInProcess", available))
 			return conn, nil
 		}

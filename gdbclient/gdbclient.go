@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 	"strconv"
 	"time"
+	"unsafe"
 )
 
 func SetLogger(logger *zap.Logger) {
@@ -230,6 +231,7 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	// send request to connection, and return future
 	internal.Logger.Info("submit script",
 		zap.Time("time", time.Now()),
+		zap.Uintptr("conn", uintptr(unsafe.Pointer(conn))),
 		zap.String("dsl", request.Args[graph.ARGS_GREMLIN].(string)),
 		zap.String("bindings", string(bindingsStr)),
 		zap.String("processor", request.Processor))
@@ -240,6 +242,7 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 		c.connPool.Put(conn)
 		internal.Logger.Info("submit script failed",
 			zap.Time("time", time.Now()),
+			zap.Uintptr("conn", uintptr(unsafe.Pointer(conn))),
 			zap.Error(err),
 			zap.String("dsl", request.Args[graph.ARGS_GREMLIN].(string)))
 	}
