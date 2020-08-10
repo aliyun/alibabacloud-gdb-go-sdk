@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 	"math"
+	"net"
 	"net/http"
 	"reflect"
 	"sync"
@@ -69,6 +70,13 @@ func NewConnWebSocket(opt *Options) (*ConnWebSocket, error) {
 	netConn, _, err := dialer.Dial(opt.GdbUrl, http.Header{})
 	if err != nil {
 		return nil, err
+	}
+
+	// disable system tcp-keepAlive
+	if tcp, ok := netConn.UnderlyingConn().(*net.TCPConn); ok {
+		if err := tcp.SetKeepAlive(false); err != nil {
+			internal.Logger.Error("set keepAlive failed", zap.Error(err))
+		}
 	}
 
 	cn := &ConnWebSocket{
