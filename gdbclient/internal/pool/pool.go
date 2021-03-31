@@ -448,13 +448,14 @@ restart:
 			goto restart
 		}
 	}
+	brokenConsLen := p.poolSize - len(p.conns)
 	p.connsMu.Unlock()
 
 	for _, cn := range brokenConns {
 		internal.Logger.Debug("reap stale conn", zap.Time("time", time.Now()), zap.Stringer("str", cn))
 		p.closeConn(cn)
 	}
-	return len(brokenConns)
+	return brokenConsLen
 }
 
 func (p *ConnPool) isStaleConns(cn *ConnWebSocket) bool {
