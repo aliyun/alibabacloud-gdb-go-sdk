@@ -221,7 +221,7 @@ func (c *baseClient) transaction(ops string) error {
 func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.ResponseFuture, error) {
 	conn, err := c.connPool.Get()
 	if err != nil {
-		internal.Logger.Info("request connect failed",
+		internal.Logger.Error("request connect failed",
 			zap.Time("time", time.Now()),
 			zap.Error(err))
 		return nil, err
@@ -240,7 +240,7 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	if err != nil {
 		// return connection to pool if request is not pending
 		c.connPool.Put(conn)
-		internal.Logger.Info("submit script failed",
+		internal.Logger.Error("submit script failed",
 			zap.Time("time", time.Now()),
 			zap.Uintptr("conn", uintptr(unsafe.Pointer(conn))),
 			zap.Error(err),
