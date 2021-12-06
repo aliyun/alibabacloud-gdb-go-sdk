@@ -169,9 +169,10 @@ func (c *baseClient) BatchSubmit(batchSubmit func(ClientShell) error) error {
 
 	// rollback submit errors, include batch submit and commit
 	if err != nil {
-		err = c.transaction(_ROLLBACK)
-		if err != nil {
+		err2 := c.transaction(_ROLLBACK)
+		if err2 != nil {
 			internal.Logger.Error("unstable transaction status as rollback failed", zap.Error(err), zap.Time("time", time.Now()))
+			return err2
 		}
 	}
 	return err
@@ -240,7 +241,7 @@ func (c *baseClient) requestAsync(request *graphsonv3.Request) (*graphsonv3.Resp
 	if err != nil {
 		// return connection to pool if request is not pending
 		c.connPool.Put(conn)
-		internal.Logger.Error("submit script failed",
+		internal.Logger.Warn("submit script failed",
 			zap.Time("time", time.Now()),
 			zap.Uintptr("conn", uintptr(unsafe.Pointer(conn))),
 			zap.Error(err),
