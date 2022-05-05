@@ -61,10 +61,20 @@ type ConnWebSocket struct {
 }
 
 func NewConnWebSocket(opt *Options) (*ConnWebSocket, error) {
-	dialer := websocket.Dialer{
+	dialer := &websocket.Dialer{
 		WriteBufferSize:  1024 * 8,
 		ReadBufferSize:   1024 * 8,
 		HandshakeTimeout: 5 * time.Second,
+	}
+
+	if opt.HandshakeTimeout != 0 {
+		dialer.HandshakeTimeout = opt.HandshakeTimeout
+	}
+	if opt.ReadBufferSize != 0 {
+		dialer.ReadBufferSize = opt.ReadBufferSize
+	}
+	if opt.WriteBufferSize != 0 {
+		dialer.WriteBufferSize = opt.WriteBufferSize
 	}
 
 	netConn, _, err := dialer.Dial(opt.GdbUrl, http.Header{})
@@ -256,7 +266,7 @@ func (cn *ConnWebSocket) readResponse() {
 				cn._broken = true
 				cn.lastIoError = err
 				_ = cn.notifier != nil && cn.notifier()
-				internal.Logger.Error("conn read broken", zapPtr(cn),zap.Time("time", time.Now()), zap.Error(err))
+				internal.Logger.Error("conn read broken", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 				return
 			}
 		} else {

@@ -49,6 +49,9 @@ type Options struct {
 	WriteTimeout time.Duration
 	PingInterval time.Duration
 
+	ReadBufferSize, WriteBufferSize int
+	HandshakeTimeout                time.Duration
+
 	MaxInProcessPerConn         int
 	MaxSimultaneousUsagePerConn int
 }
