@@ -50,7 +50,7 @@ settings := &goClient.Settings{
 	Host:     host,
 	Port:     port,
 	Username: username,
-	Password: password,
-    DBName: "${db_name}",
+    	Password: password,
+    	DBName: "${db_name}",
 }
 ```
