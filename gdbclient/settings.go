@@ -26,11 +26,12 @@ type Settings struct {
 	Host string
 	// username and password for GDB auth
 	Username, Password string
+	// sub graph dbName
+	DBName string
 	// serializer for the driver of request to GDB and response from
 	Serializer string
 	// manageTransaction by user client or not in session
 	IsManageTransaction bool
-
 	// maximum number of socket connections, Default is 8
 	PoolSize int
 	// Amount of time client waits for connection if all connections
@@ -93,8 +94,14 @@ func (s *Settings) init() {
 }
 
 func (s *Settings) getOpts() *pool.Options {
+	var url string
+	if (s.DBName == "") {
+		url = "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin";
+	} else {
+		url = "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin/" + s.DBName;
+	}
 	return &pool.Options{
-		GdbUrl:       "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin",
+		GdbUrl:       url,
 		Username:     s.Username,
 		Password:     s.Password,
 		PingInterval: s.PingInterval,
@@ -113,8 +120,14 @@ func (s *Settings) getOpts() *pool.Options {
 }
 
 func (s *Settings) getSessionOpts() *pool.Options {
+	var url string
+	if (s.DBName == "") {
+		url = "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin";
+	} else {
+		url = "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin/" + s.DBName;
+	}
 	return &pool.Options{
-		GdbUrl:       "ws://" + s.Host + ":" + strconv.FormatInt(int64(s.Port), 10) + "/gremlin",
+		GdbUrl:       url,
 		Username:     s.Username,
 		Password:     s.Password,
 		PingInterval: s.PingInterval,
