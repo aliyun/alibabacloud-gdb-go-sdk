@@ -16,11 +16,6 @@ package pool
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
-	"github.com/gorilla/websocket"
-	"go.uber.org/zap"
 	"math"
 	"net"
 	"net/http"
@@ -29,6 +24,12 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/graph"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal"
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/graphsonv3"
+	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 var noDeadline = time.Time{}
@@ -42,6 +43,7 @@ type ConnWebSocket struct {
 	pendingResponses *sync.Map
 	pendingSize      int32
 	maxInProcess     int32
+	readTimeout      time.Duration
 
 	createdAt time.Time
 	usedAt    int64 // atomic
@@ -87,6 +89,7 @@ func NewConnWebSocket(opt *Options) (*ConnWebSocket, error) {
 		pendingResponses: &sync.Map{},
 		lastIoError:      errConnClosed,
 		maxInProcess:     int32(opt.MaxInProcessPerConn),
+		readTimeout:      opt.ReadTimeout,
 	}
 
 	cn.setUsedAt(time.Now())
@@ -239,7 +242,7 @@ func (cn *ConnWebSocket) readResponse() {
 		var response *graphsonv3.Response
 
 		// read response as block, exit by io close signal
-		if err = cn.netConn.SetReadDeadline(cn.deadline(0)); err == nil {
+		if err = cn.netConn.SetReadDeadline(cn.deadline(cn.readTimeout)); err == nil {
 			if _, msg, err = cn.netConn.ReadMessage(); err == nil {
 				response, err = graphsonv3.ReadResponse(msg)
 			}
@@ -256,7 +259,7 @@ func (cn *ConnWebSocket) readResponse() {
 				cn._broken = true
 				cn.lastIoError = err
 				_ = cn.notifier != nil && cn.notifier()
-				internal.Logger.Error("conn read broken", zapPtr(cn),zap.Time("time", time.Now()), zap.Error(err))
+				internal.Logger.Error("conn read broken", zapPtr(cn), zap.Time("time", time.Now()), zap.Error(err))
 				return
 			}
 		} else {

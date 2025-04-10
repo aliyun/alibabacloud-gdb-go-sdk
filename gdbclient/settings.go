@@ -14,9 +14,10 @@
 package gdbclient
 
 import (
-	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/pool"
 	"strconv"
 	"time"
+
+	"github.com/aliyun/alibabacloud-gdb-go-sdk/gdbclient/internal/pool"
 )
 
 type Settings struct {
@@ -82,7 +83,7 @@ func (s *Settings) init() {
 		s.WriteTimeout = 5 * time.Second
 	}
 	if s.ReadTimeout == 0 {
-		s.ReadTimeout = s.WriteTimeout
+		s.ReadTimeout = 31 * time.Second
 	}
 	if s.PoolTimeout == 0 {
 		s.PoolTimeout = s.ReadTimeout + 1
