@@ -42,3 +42,15 @@ cd examples/add-vertex
 go run main.go -host <gdb-host> -port 8182 -username root -password <password>
 ```
 
+## 多图使用
+
+```
+# DBName为您要访问的子图名，如果不使用子图功能，无需传递该参数
+settings := &goClient.Settings{
+	Host:     host,
+	Port:     port,
+	Username: username,
+    	Password: password,
+    	DBName: "${db_name}",
+}
+```
